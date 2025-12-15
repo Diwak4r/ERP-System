@@ -1,0 +1,8 @@
+<tr>
+    <td>{{ form.worker }}</td>
+    <td>{{ form.item }}</td>
+    <td>{{ form.target_qty }}</td>
+    <td>{{ form.actual_qty }}</td>
+    <td>{{ form.shift_hours }}</td>
+</tr>
+<input type="hidden" name="form-TOTAL_FORMS" value="{{ next_index|add:1 }}" hx-swap-oob="true">

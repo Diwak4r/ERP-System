@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Production Entries</title>
+    <style>
+        .status-met { color: green; font-weight: bold; }
+        .status-missed { color: red; font-weight: bold; }
+    </style>
+</head>
+<body>
+    <h1>Production Entries</h1>
+    <form method="get">
+        <label>Date: <input type="date" name="date" value="{{ entry_date|date:'Y-m-d' }}"></label>
+        <label>Section:
+            <select name="section">
+                <option value="">All</option>
+                {% for section in sections %}
+                    <option value="{{ section.id }}" {% if selected_section and section.id == selected_section.id %}selected{% endif %}>{{ section.name }}</option>
+                {% endfor %}
+            </select>
+        </label>
+        <button type="submit">Filter</button>
+    </form>
+    <table>
+        <thead>
+            <tr>
+                <th>Date</th>
+                <th>Section</th>
+                <th>Worker</th>
+                <th>Item</th>
+                <th>Target</th>
+                <th>Actual</th>
+                <th>Overtime</th>
+                <th>Status</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for entry in entries %}
+                <tr>
+                    <td>{{ entry.entry_date }}</td>
+                    <td>{{ entry.section.name }}</td>
+                    <td>{{ entry.worker.name }}</td>
+                    <td>{{ entry.item.name }}</td>
+                    <td>{{ entry.target_qty }}</td>
+                    <td>{{ entry.actual_qty }}</td>
+                    <td>{{ entry.overtime_hours }}</td>
+                    <td>
+                        {% if entry.target_met %}
+                            <span class="status-met">Met</span>
+                        {% else %}
+                            <span class="status-missed">Missed</span>
+                        {% endif %}
+                    </td>
+                </tr>
+            {% empty %}
+                <tr><td colspan="8">No entries found.</td></tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</body>
+</html>
