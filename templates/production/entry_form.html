@@ -1,0 +1,51 @@
+{% load static %}
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Production Entry</title>
+    <script src="https://unpkg.com/htmx.org@1.9.12"></script>
+    <style>
+        table { width: 100%; border-collapse: collapse; }
+        th, td { padding: 8px; border: 1px solid #ddd; }
+        .target-met { color: green; }
+        .target-missed { color: red; }
+    </style>
+</head>
+<body>
+    <h1>Production Entry</h1>
+    <form method="post" hx-boost="false">
+        {% csrf_token %}
+        <label>Date: <input type="date" name="entry_date" value="{{ entry_date|date:'Y-m-d' }}"></label>
+        <label>Section:
+            <select name="section">
+                {% for section in sections %}
+                    <option value="{{ section.id }}" {% if section.id == selected_section.id %}selected{% endif %}>{{ section.name }}</option>
+                {% endfor %}
+            </select>
+        </label>
+        <table id="entries-table">
+            <thead>
+                <tr>
+                    <th>Worker</th>
+                    <th>Item</th>
+                    <th>Target Qty</th>
+                    <th>Actual Qty</th>
+                    <th>Shift Hours</th>
+                </tr>
+            </thead>
+            <tbody id="entry-rows">
+                {{ formset.management_form }}
+                {% for form in formset.forms %}
+                    {% include "production/entry_row.html" with form=form index=forloop.counter0 next_index=formset.total_form_count %}
+                {% endfor %}
+            </tbody>
+        </table>
+        <button type="button"
+            hx-get="{% url 'production:entry-row' %}?form_count={{ formset.total_form_count }}&section={{ selected_section.id }}&entry_date={{ entry_date|date:'Y-m-d' }}"
+            hx-target="#entry-rows" hx-swap="beforeend">
+            Add Row
+        </button>
+        <button type="submit">Save</button>
+    </form>
+</body>
+</html>
