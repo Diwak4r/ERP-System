@@ -1,0 +1,79 @@
+{% extends 'production/base.html' %}
+{% block title %}Worker History{% endblock %}
+{% block content %}
+<h2>Worker History</h2>
+<form method="get" class="row g-3 mb-4">
+    <div class="col-auto">
+        <label class="form-label">Worker</label>
+        <select name="worker" class="form-select">
+            {% for w in workers %}
+            <option value="{{ w.id }}" {% if w == selected_worker %}selected{% endif %}>{{ w.name }}</option>
+            {% endfor %}
+        </select>
+    </div>
+    <div class="col-auto">
+        <label class="form-label">Section</label>
+        <select name="section" class="form-select">
+            {% for sec in sections %}
+            <option value="{{ sec.id }}" {% if sec == selected_section %}selected{% endif %}>{{ sec.name }}</option>
+            {% endfor %}
+        </select>
+    </div>
+    <div class="col-auto">
+        <label class="form-label">Start</label>
+        <input type="date" name="start" value="{{ start_date|date:'Y-m-d' }}" class="form-control">
+    </div>
+    <div class="col-auto">
+        <label class="form-label">End</label>
+        <input type="date" name="end" value="{{ end_date|date:'Y-m-d' }}" class="form-control">
+    </div>
+    <div class="col-auto align-self-end">
+        <button class="btn btn-primary" type="submit">Load</button>
+    </div>
+</form>
+<div class="card mb-4">
+    <div class="card-body">
+        <h5 class="card-title">Daily Performance</h5>
+        <canvas id="historyChart" height="100"></canvas>
+    </div>
+</div>
+<table class="table table-striped">
+    <thead><tr><th>Date</th><th>Total Target</th><th>Total Actual</th><th>Met?</th></tr></thead>
+    <tbody>
+        {% for row in daily_rows %}
+        <tr class="{% if not row.target_met %}target-miss{% endif %}">
+            <td>{{ row.date }}</td>
+            <td>{{ row.total_target }}</td>
+            <td>{{ row.total_actual }}</td>
+            <td>{% if row.target_met %}✅{% else %}❌{% endif %}</td>
+        </tr>
+        {% empty %}
+        <tr><td colspan="4">No data</td></tr>
+        {% endfor %}
+    </tbody>
+</table>
+<script>
+const chartData = {{ chart_json|safe }};
+const ctx = document.getElementById('historyChart');
+new Chart(ctx, {
+    type: 'line',
+    data: {
+        labels: chartData.labels,
+        datasets: [
+            {
+                label: 'Target',
+                data: chartData.targets,
+                borderColor: '#0d6efd',
+                fill: false
+            },
+            {
+                label: 'Actual',
+                data: chartData.actuals,
+                borderColor: '#198754',
+                fill: false
+            }
+        ]
+    }
+});
+</script>
+{% endblock %}

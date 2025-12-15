@@ -1,0 +1,104 @@
+from django.db import migrations, models
+import django.db.models.deletion
+import django.utils.timezone
+from django.conf import settings
+from decimal import Decimal
+
+
+class Migration(migrations.Migration):
+    initial = True
+
+    dependencies = [
+        migrations.swappable_dependency(settings.AUTH_USER_MODEL),
+    ]
+
+    operations = [
+        migrations.CreateModel(
+            name="Section",
+            fields=[
+                ("id", models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name="ID")),
+                ("name", models.CharField(max_length=100)),
+                ("code", models.CharField(max_length=20, unique=True)),
+                ("is_active", models.BooleanField(default=True)),
+            ],
+            options={"ordering": ["name"]},
+        ),
+        migrations.CreateModel(
+            name="Worker",
+            fields=[
+                ("id", models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name="ID")),
+                ("name", models.CharField(max_length=100)),
+                ("employee_code", models.CharField(max_length=30, unique=True)),
+                ("is_daily_wage", models.BooleanField(default=False)),
+                ("is_active", models.BooleanField(default=True)),
+            ],
+            options={"ordering": ["name"]},
+        ),
+        migrations.CreateModel(
+            name="Item",
+            fields=[
+                ("id", models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name="ID")),
+                ("name", models.CharField(max_length=100)),
+                ("sku", models.CharField(max_length=50, unique=True)),
+                (
+                    "unit",
+                    models.CharField(
+                        choices=[("KG", "Kg"), ("PCS", "Pieces"), ("OTHER", "Other")],
+                        default="PCS",
+                        max_length=10,
+                    ),
+                ),
+                ("is_active", models.BooleanField(default=True)),
+            ],
+            options={"ordering": ["name"]},
+        ),
+        migrations.CreateModel(
+            name="ProductionEntry",
+            fields=[
+                ("id", models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name="ID")),
+                ("entry_date", models.DateField(default=django.utils.timezone.now)),
+                ("target_qty", models.DecimalField(decimal_places=2, max_digits=12)),
+                ("actual_qty", models.DecimalField(decimal_places=2, max_digits=12)),
+                ("shift_hours", models.DecimalField(decimal_places=2, default=Decimal("8.00"), max_digits=5)),
+                ("overtime_hours", models.DecimalField(decimal_places=2, default=Decimal("0.00"), max_digits=6)),
+                ("target_met", models.BooleanField(default=False)),
+                ("created_at", models.DateTimeField(auto_now_add=True)),
+                ("updated_at", models.DateTimeField(auto_now=True)),
+                (
+                    "created_by",
+                    models.ForeignKey(
+                        blank=True,
+                        null=True,
+                        on_delete=django.db.models.deletion.SET_NULL,
+                        related_name="production_entries",
+                        to=settings.AUTH_USER_MODEL,
+                    ),
+                ),
+                (
+                    "item",
+                    models.ForeignKey(
+                        on_delete=django.db.models.deletion.PROTECT, related_name="entries", to="production.item"
+                    ),
+                ),
+                (
+                    "section",
+                    models.ForeignKey(
+                        on_delete=django.db.models.deletion.PROTECT,
+                        related_name="entries",
+                        to="production.section",
+                    ),
+                ),
+                (
+                    "worker",
+                    models.ForeignKey(
+                        on_delete=django.db.models.deletion.PROTECT, related_name="entries", to="production.worker"
+                    ),
+                ),
+            ],
+            options={"ordering": ["-entry_date", "section_id", "worker_id"]},
+        ),
+        migrations.AlterUniqueTogether(
+            name="productionentry",
+            unique_together={("entry_date", "section", "worker", "item")},
+        ),
+    ]

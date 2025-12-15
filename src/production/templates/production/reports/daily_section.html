@@ -1,0 +1,71 @@
+{% extends 'production/base.html' %}
+{% block title %}Daily Section Summary{% endblock %}
+{% block content %}
+<h2>Daily Section Summary</h2>
+<form method="get" class="row g-3 mb-4">
+    <div class="col-auto">
+        <label class="form-label">Date</label>
+        <input type="date" name="date" value="{{ selected_date|date:'Y-m-d' }}" class="form-control">
+    </div>
+    <div class="col-auto">
+        <label class="form-label">Section</label>
+        <select name="section" class="form-select">
+            {% for sec in sections %}
+            <option value="{{ sec.id }}" {% if sec == selected_section %}selected{% endif %}>{{ sec.name }}</option>
+            {% endfor %}
+        </select>
+    </div>
+    <div class="col-auto align-self-end">
+        <button class="btn btn-primary" type="submit">Load</button>
+    </div>
+</form>
+<div class="row mb-4">
+    <div class="col-md-4">
+        <div class="card">
+            <div class="card-body">
+                <h5 class="card-title">Workers Used</h5>
+                <p class="card-text display-6">{{ worker_count }}</p>
+            </div>
+        </div>
+    </div>
+</div>
+<h4>Totals by Item</h4>
+<table class="table table-striped">
+    <thead><tr><th>Item</th><th>Total Actual</th></tr></thead>
+    <tbody>
+    {% for row in per_item %}
+        <tr><td>{{ row.item__name }}</td><td>{{ row.total_actual }}</td></tr>
+    {% empty %}
+        <tr><td colspan="2">No data</td></tr>
+    {% endfor %}
+    </tbody>
+</table>
+<h4>Totals by Worker</h4>
+<table class="table table-striped">
+    <thead><tr><th>Worker</th><th>Total Actual</th></tr></thead>
+    <tbody>
+    {% for row in per_worker %}
+        <tr><td>{{ row.worker__name }}</td><td>{{ row.total_actual }}</td></tr>
+    {% empty %}
+        <tr><td colspan="2">No data</td></tr>
+    {% endfor %}
+    </tbody>
+</table>
+<h4>Entries</h4>
+<table class="table">
+    <thead><tr><th>Worker</th><th>Item</th><th>Target</th><th>Actual</th><th>Met?</th></tr></thead>
+    <tbody>
+        {% for entry in entries %}
+        <tr class="{% if not entry.target_met %}target-miss{% endif %}">
+            <td>{{ entry.worker.name }}</td>
+            <td>{{ entry.item.name }}</td>
+            <td>{{ entry.target_qty }}</td>
+            <td>{{ entry.actual_qty }}</td>
+            <td>{% if entry.target_met %}✅{% else %}❌{% endif %}</td>
+        </tr>
+        {% empty %}
+        <tr><td colspan="5">No entries found</td></tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% endblock %}

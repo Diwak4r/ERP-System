@@ -1,0 +1,37 @@
+{% extends 'production/base.html' %}
+{% block title %}Item Aggregate Report{% endblock %}
+{% block content %}
+<h2>Item Aggregate</h2>
+<form method="get" class="row g-3 mb-4">
+    <div class="col-auto">
+        <label class="form-label">Date</label>
+        <input type="date" name="date" value="{{ selected_date|date:'Y-m-d' }}" class="form-control">
+    </div>
+    <div class="col-auto">
+        <label class="form-label">Section</label>
+        <select name="section" class="form-select">
+            {% for sec in sections %}
+            <option value="{{ sec.id }}" {% if sec == selected_section %}selected{% endif %}>{{ sec.name }}</option>
+            {% endfor %}
+        </select>
+    </div>
+    <div class="col-auto align-self-end">
+        <button class="btn btn-primary" type="submit">Load</button>
+    </div>
+</form>
+<table class="table table-bordered">
+    <thead><tr><th>Item</th><th>Total Target</th><th>Total Actual</th><th>Hit Rate (%)</th></tr></thead>
+    <tbody>
+        {% for row in aggregate %}
+        <tr>
+            <td>{{ row.item__name }}</td>
+            <td>{{ row.total_target }}</td>
+            <td>{{ row.total_actual }}</td>
+            <td>{{ row.hit_rate }}</td>
+        </tr>
+        {% empty %}
+        <tr><td colspan="4">No data</td></tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% endblock %}
