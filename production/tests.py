@@ -1,10 +1,9 @@
-from datetime import date, timedelta
+from datetime import date
 from decimal import Decimal
 
 import pytest
 from django.contrib.auth import get_user_model
 from django.contrib.auth.models import Group
-from django.core.exceptions import PermissionDenied
 from django.urls import reverse
 
 from .models import Item, ProductionEntry, Section, TargetRule, Worker

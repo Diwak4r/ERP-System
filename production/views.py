@@ -5,7 +5,6 @@ from decimal import Decimal
 
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
-from django.contrib.auth.models import Group
 from django.http import HttpRequest, HttpResponse, HttpResponseForbidden
 from django.shortcuts import get_object_or_404, redirect, render
 from django.template.loader import render_to_string
@@ -18,7 +17,11 @@ ROLE_SUPERVISOR = "SUPERVISOR"
 
 
 def _user_has_role(user, role: str) -> bool:
-    return user.is_superuser or user.groups.filter(name=role).exists()
+    if user.is_superuser:
+        return True
+    if not hasattr(user, "_group_names_cache"):
+        user._group_names_cache = set(user.groups.values_list("name", flat=True))
+    return role in user._group_names_cache
 
 
 def _available_sections(user):
@@ -50,14 +53,24 @@ def production_entry(request: HttpRequest) -> HttpResponse:
     if selected_section and not _ensure_permission(request.user, selected_section):
         return HttpResponseForbidden("You are not allowed to create entries for this section")
 
-    form_kwargs = {"section": selected_section, "entry_date": entry_date_val}
+    # Optimization: Pre-evaluate workers and items querysets to share across forms
+    workers_qs = Worker.objects.filter(is_active=True)
+    items_qs = Item.objects.filter(is_active=True)
+
+    form_kwargs = {
+        "section": selected_section,
+        "entry_date": entry_date_val,
+        "workers_qs": workers_qs,
+        "items_qs": items_qs,
+        "skip_hydration": True,
+    }
 
     if request.method == "POST":
         formset = ProductionEntryFormSet(request.POST, prefix="form", form_kwargs=form_kwargs)
         if not selected_section:
             messages.error(request, "Section is required")
         if formset.is_valid() and selected_section:
-            created_entries = []
+            entries_to_create = []
             for form in formset:
                 data = form.cleaned_data
                 entry = ProductionEntry(
@@ -71,11 +84,16 @@ def production_entry(request: HttpRequest) -> HttpResponse:
                     created_by=request.user,
                 )
                 entry.set_outcomes()
-                entry.save()
-                created_entries.append(entry)
+                entries_to_create.append(entry)
                 if entry.target_qty <= 0:
                     messages.warning(request, f"No target rule found for {entry.item}; overtime set to 0")
-            messages.success(request, f"Saved {len(created_entries)} production entr{'y' if len(created_entries)==1 else 'ies'}")
+
+            # Optimization: Use bulk_create to save all entries in a single query
+            ProductionEntry.objects.bulk_create(entries_to_create)
+
+            messages.success(
+                request, f"Saved {len(entries_to_create)} production entr{'y' if len(entries_to_create)==1 else 'ies'}"
+            )
             return redirect("production:entries")
     else:
         formset = ProductionEntryFormSet(prefix="form", initial=[{}], form_kwargs=form_kwargs)
@@ -91,7 +109,6 @@ def production_entry(request: HttpRequest) -> HttpResponse:
 
 @login_required
 def production_entry_row(request: HttpRequest) -> HttpResponse:
-    sections = _available_sections(request.user)
     section_id = request.GET.get("section")
     entry_date_str = request.GET.get("entry_date")
     form_count = int(request.GET.get("form_count", 0))
@@ -99,7 +116,15 @@ def production_entry_row(request: HttpRequest) -> HttpResponse:
     if section and not _ensure_permission(request.user, section):
         return HttpResponseForbidden("Not allowed")
     entry_date_val = date.fromisoformat(entry_date_str) if entry_date_str else date.today()
-    form = ProductionEntryForm(prefix=f"form-{form_count}", section=section, entry_date=entry_date_val)
+
+    # Optimization: Even for a single row, we use the same pattern for consistency
+    form = ProductionEntryForm(
+        prefix=f"form-{form_count}",
+        section=section,
+        entry_date=entry_date_val,
+        workers_qs=Worker.objects.filter(is_active=True),
+        items_qs=Item.objects.filter(is_active=True),
+    )
     html = render_to_string(
         "production/entry_row.html",
         {"form": form, "index": form_count, "next_index": form_count + 1},
