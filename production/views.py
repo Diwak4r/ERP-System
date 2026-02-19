@@ -5,20 +5,25 @@ from decimal import Decimal
 
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
-from django.contrib.auth.models import Group
 from django.http import HttpRequest, HttpResponse, HttpResponseForbidden
 from django.shortcuts import get_object_or_404, redirect, render
 from django.template.loader import render_to_string
 
 from .forms import ProductionEntryForm, ProductionEntryFormSet
-from .models import Item, ProductionEntry, Section, TargetRule, Worker
+from .models import Item, ProductionEntry, Section, TargetRule
 
 ROLE_ADMIN = "ADMIN"
 ROLE_SUPERVISOR = "SUPERVISOR"
 
 
 def _user_has_role(user, role: str) -> bool:
-    return user.is_superuser or user.groups.filter(name=role).exists()
+    if user.is_superuser:
+        return True
+    # BOLT OPTIMIZATION: Cache group names on the user instance to avoid redundant database queries
+    # for role checks within the same request lifecycle.
+    if not hasattr(user, "_group_names_cache"):
+        user._group_names_cache = set(user.groups.values_list("name", flat=True))
+    return role in user._group_names_cache
 
 
 def _available_sections(user):
@@ -91,7 +96,6 @@ def production_entry(request: HttpRequest) -> HttpResponse:
 
 @login_required
 def production_entry_row(request: HttpRequest) -> HttpResponse:
-    sections = _available_sections(request.user)
     section_id = request.GET.get("section")
     entry_date_str = request.GET.get("entry_date")
     form_count = int(request.GET.get("form_count", 0))
