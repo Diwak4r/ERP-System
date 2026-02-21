@@ -1,0 +1,3 @@
+## 2026-02-21 - [Optimizing Django Admin with list_select_related]
+**Learning:** In projects emphasizing data auditability and high-volume production entries, the Django Admin becomes a critical interface for reporting. Failing to use `list_select_related` on heavy list views like `ProductionEntry` (which has 3 ForeignKeys in its list view) results in 3N+1 queries, which can cripple the admin's responsiveness as data grows.
+**Action:** Always include ForeignKey fields used in `list_display` within the `list_select_related` attribute of the `ModelAdmin` class to ensure O(1) query complexity for list views.
