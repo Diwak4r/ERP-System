@@ -9,10 +9,18 @@ from .models import Item, ProductionEntry, Section, TargetRule, Worker
 
 
 class ProductionEntryForm(forms.ModelForm):
-    def __init__(self, *args, section: Optional[Section] = None, entry_date: Optional[date] = None, **kwargs):
+    def __init__(
+        self,
+        *args,
+        section: Optional[Section] = None,
+        entry_date: Optional[date] = None,
+        target_rules: Optional[dict[int, TargetRule]] = None,
+        **kwargs,
+    ):
         super().__init__(*args, **kwargs)
         self.section = section
         self.entry_date = entry_date
+        self.target_rules = target_rules
         self.fields["worker"].queryset = Worker.objects.filter(is_active=True)
         self.fields["item"].queryset = Item.objects.filter(is_active=True)
         if section:
@@ -29,12 +37,19 @@ class ProductionEntryForm(forms.ModelForm):
         }
 
     def _hydrate_targets(self) -> None:
-        if not self.section or not self.entry_date or not self.cleaned_data.get("item"):
+        item = self.cleaned_data.get("item")
+        if not self.section or not self.entry_date or not item:
             return
-        rule = (
-            TargetRule.objects.for_section_item_date(section=self.section, item=self.cleaned_data["item"], target_date=self.entry_date)
-            .first()
-        )
+
+        rule = None
+        if self.target_rules is not None:
+            # Use pre-fetched rules if available (Bolt Optimization)
+            rule = self.target_rules.get(item.id)
+        else:
+            rule = TargetRule.objects.for_section_item_date(
+                section=self.section, item=item, target_date=self.entry_date
+            ).first()
+
         if rule:
             self.cleaned_data["target_qty"] = rule.target_qty
             self.cleaned_data["shift_hours"] = rule.shift_hours

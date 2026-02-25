@@ -6,6 +6,7 @@ from decimal import Decimal
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.contrib.auth.models import Group
+from django.db import models
 from django.http import HttpRequest, HttpResponse, HttpResponseForbidden
 from django.shortcuts import get_object_or_404, redirect, render
 from django.template.loader import render_to_string
@@ -18,7 +19,12 @@ ROLE_SUPERVISOR = "SUPERVISOR"
 
 
 def _user_has_role(user, role: str) -> bool:
-    return user.is_superuser or user.groups.filter(name=role).exists()
+    if user.is_superuser:
+        return True
+    if not hasattr(user, "_group_names_cache"):
+        # Bolt Optimization: Cache group names for the duration of the request
+        user._group_names_cache = set(user.groups.values_list("name", flat=True))
+    return role in user._group_names_cache
 
 
 def _available_sections(user):
@@ -44,20 +50,49 @@ def production_entry(request: HttpRequest) -> HttpResponse:
     entry_date_val = date.fromisoformat(entry_date_str) if entry_date_str else today
 
     sections = _available_sections(request.user)
-    selected_section_id = request.POST.get("section") or request.GET.get("section") or (sections.first().id if sections else None)
-    selected_section = Section.objects.filter(id=selected_section_id).first() if selected_section_id else None
+    selected_section_id = (
+        request.POST.get("section")
+        or request.GET.get("section")
+        or (sections.first().id if sections else None)
+    )
+    selected_section = (
+        Section.objects.filter(id=selected_section_id).first()
+        if selected_section_id
+        else None
+    )
 
     if selected_section and not _ensure_permission(request.user, selected_section):
         return HttpResponseForbidden("You are not allowed to create entries for this section")
 
-    form_kwargs = {"section": selected_section, "entry_date": entry_date_val}
+    # Bolt Optimization: Pre-fetch target rules for the entire section/date
+    target_rules = None
+    if selected_section:
+        rules = (
+            TargetRule.objects.filter(
+                section=selected_section, start_date__lte=entry_date_val
+            )
+            .filter(
+                models.Q(end_date__gte=entry_date_val) | models.Q(end_date__isnull=True)
+            )
+            .order_by("item_id", "-start_date")
+        )
+        target_rules = {}
+        for rule in rules:
+            if rule.item_id not in target_rules:
+                target_rules[rule.item_id] = rule
+
+    form_kwargs = {
+        "section": selected_section,
+        "entry_date": entry_date_val,
+        "target_rules": target_rules,
+    }
 
     if request.method == "POST":
         formset = ProductionEntryFormSet(request.POST, prefix="form", form_kwargs=form_kwargs)
         if not selected_section:
             messages.error(request, "Section is required")
         if formset.is_valid() and selected_section:
-            created_entries = []
+            entries_to_create = []
             for form in formset:
                 data = form.cleaned_data
                 entry = ProductionEntry(
@@ -71,11 +106,18 @@ def production_entry(request: HttpRequest) -> HttpResponse:
                     created_by=request.user,
                 )
                 entry.set_outcomes()
-                entry.save()
-                created_entries.append(entry)
+                entries_to_create.append(entry)
                 if entry.target_qty <= 0:
-                    messages.warning(request, f"No target rule found for {entry.item}; overtime set to 0")
-            messages.success(request, f"Saved {len(created_entries)} production entr{'y' if len(created_entries)==1 else 'ies'}")
+                    messages.warning(
+                        request,
+                        f"No target rule found for {entry.item}; overtime set to 0",
+                    )
+            # Bolt Optimization: Use bulk_create for O(1) database insertion
+            ProductionEntry.objects.bulk_create(entries_to_create)
+            messages.success(
+                request,
+                f"Saved {len(entries_to_create)} production entr{'y' if len(entries_to_create)==1 else 'ies'}",
+            )
             return redirect("production:entries")
     else:
         formset = ProductionEntryFormSet(prefix="form", initial=[{}], form_kwargs=form_kwargs)
