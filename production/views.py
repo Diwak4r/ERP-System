@@ -71,10 +71,14 @@ def production_entry(request: HttpRequest) -> HttpResponse:
                     created_by=request.user,
                 )
                 entry.set_outcomes()
-                entry.save()
+                # entry.save() is replaced by bulk_create below to reduce database roundtrips
                 created_entries.append(entry)
                 if entry.target_qty <= 0:
                     messages.warning(request, f"No target rule found for {entry.item}; overtime set to 0")
+
+            if created_entries:
+                ProductionEntry.objects.bulk_create(created_entries)
+
             messages.success(request, f"Saved {len(created_entries)} production entr{'y' if len(created_entries)==1 else 'ies'}")
             return redirect("production:entries")
     else:
