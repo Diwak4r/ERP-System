@@ -32,6 +32,7 @@ class TargetRuleAdmin(admin.ModelAdmin):
 
 @admin.register(ProductionEntry)
 class ProductionEntryAdmin(admin.ModelAdmin):
+    list_select_related = ("section", "worker", "item")
     list_display = (
         "entry_date",
         "section",
