@@ -18,7 +18,11 @@ ROLE_SUPERVISOR = "SUPERVISOR"
 
 
 def _user_has_role(user, role: str) -> bool:
-    return user.is_superuser or user.groups.filter(name=role).exists()
+    if user.is_superuser:
+        return True
+    if not hasattr(user, "_group_names_cache"):
+        user._group_names_cache = set(user.groups.values_list("name", flat=True))
+    return role in user._group_names_cache
 
 
 def _available_sections(user):
@@ -50,14 +54,30 @@ def production_entry(request: HttpRequest) -> HttpResponse:
     if selected_section and not _ensure_permission(request.user, selected_section):
         return HttpResponseForbidden("You are not allowed to create entries for this section")
 
-    form_kwargs = {"section": selected_section, "entry_date": entry_date_val}
+    target_rules_cache = {}
+    if selected_section:
+        from django.db.models import Q
+        rules = TargetRule.objects.filter(
+            section=selected_section,
+            start_date__lte=entry_date_val,
+        ).filter(Q(end_date__gte=entry_date_val) | Q(end_date__isnull=True)).order_by("-start_date")
+
+        for rule in rules:
+            if rule.item_id not in target_rules_cache:
+                target_rules_cache[rule.item_id] = rule
+
+    form_kwargs = {
+        "section": selected_section,
+        "entry_date": entry_date_val,
+        "target_rules_cache": target_rules_cache,
+    }
 
     if request.method == "POST":
         formset = ProductionEntryFormSet(request.POST, prefix="form", form_kwargs=form_kwargs)
         if not selected_section:
             messages.error(request, "Section is required")
         if formset.is_valid() and selected_section:
-            created_entries = []
+            entries_to_create = []
             for form in formset:
                 data = form.cleaned_data
                 entry = ProductionEntry(
@@ -71,10 +91,11 @@ def production_entry(request: HttpRequest) -> HttpResponse:
                     created_by=request.user,
                 )
                 entry.set_outcomes()
-                entry.save()
-                created_entries.append(entry)
+                entries_to_create.append(entry)
                 if entry.target_qty <= 0:
                     messages.warning(request, f"No target rule found for {entry.item}; overtime set to 0")
+
+            created_entries = ProductionEntry.objects.bulk_create(entries_to_create)
             messages.success(request, f"Saved {len(created_entries)} production entr{'y' if len(created_entries)==1 else 'ies'}")
             return redirect("production:entries")
     else:
