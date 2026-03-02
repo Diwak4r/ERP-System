@@ -18,7 +18,11 @@ ROLE_SUPERVISOR = "SUPERVISOR"
 
 
 def _user_has_role(user, role: str) -> bool:
-    return user.is_superuser or user.groups.filter(name=role).exists()
+    if user.is_superuser:
+        return True
+    if not hasattr(user, "_group_names_cache"):
+        user._group_names_cache = set(user.groups.values_list("name", flat=True))
+    return role in user._group_names_cache
 
 
 def _available_sections(user):
@@ -57,7 +61,7 @@ def production_entry(request: HttpRequest) -> HttpResponse:
         if not selected_section:
             messages.error(request, "Section is required")
         if formset.is_valid() and selected_section:
-            created_entries = []
+            entries_to_create = []
             for form in formset:
                 data = form.cleaned_data
                 entry = ProductionEntry(
@@ -71,11 +75,17 @@ def production_entry(request: HttpRequest) -> HttpResponse:
                     created_by=request.user,
                 )
                 entry.set_outcomes()
-                entry.save()
-                created_entries.append(entry)
+                entries_to_create.append(entry)
                 if entry.target_qty <= 0:
                     messages.warning(request, f"No target rule found for {entry.item}; overtime set to 0")
-            messages.success(request, f"Saved {len(created_entries)} production entr{'y' if len(created_entries)==1 else 'ies'}")
+
+            if entries_to_create:
+                ProductionEntry.objects.bulk_create(entries_to_create)
+
+            messages.success(
+                request,
+                f"Saved {len(entries_to_create)} production entr{'y' if len(entries_to_create)==1 else 'ies'}",
+            )
             return redirect("production:entries")
     else:
         formset = ProductionEntryFormSet(prefix="form", initial=[{}], form_kwargs=form_kwargs)

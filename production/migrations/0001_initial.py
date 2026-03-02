@@ -82,7 +82,7 @@ class Migration(migrations.Migration):
         migrations.AddField(
             model_name="section",
             name="supervisors",
-            field=migrations.ManyToManyField(blank=True, related_name="sections", to=settings.AUTH_USER_MODEL),
+            field=models.ManyToManyField(blank=True, related_name="sections", to=settings.AUTH_USER_MODEL),
         ),
         migrations.AddIndex(
             model_name="productionentry",
