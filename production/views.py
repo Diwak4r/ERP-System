@@ -50,10 +50,10 @@ def production_entry(request: HttpRequest) -> HttpResponse:
     if selected_section and not _ensure_permission(request.user, selected_section):
         return HttpResponseForbidden("You are not allowed to create entries for this section")
 
-    form_kwargs = {"section": selected_section, "entry_date": entry_date_val}
-
     if request.method == "POST":
-        formset = ProductionEntryFormSet(request.POST, prefix="form", form_kwargs=form_kwargs)
+        formset = ProductionEntryFormSet(
+            request.POST, prefix="form", form_kwargs={"section": selected_section, "entry_date": entry_date_val}
+        )
         if not selected_section:
             messages.error(request, "Section is required")
         if formset.is_valid() and selected_section:
@@ -78,7 +78,9 @@ def production_entry(request: HttpRequest) -> HttpResponse:
             messages.success(request, f"Saved {len(created_entries)} production entr{'y' if len(created_entries)==1 else 'ies'}")
             return redirect("production:entries")
     else:
-        formset = ProductionEntryFormSet(prefix="form", initial=[{}], form_kwargs=form_kwargs)
+        formset = ProductionEntryFormSet(
+            prefix="form", initial=[{}], form_kwargs={"section": selected_section, "entry_date": entry_date_val}
+        )
 
     context = {
         "formset": formset,
@@ -99,7 +101,18 @@ def production_entry_row(request: HttpRequest) -> HttpResponse:
     if section and not _ensure_permission(request.user, section):
         return HttpResponseForbidden("Not allowed")
     entry_date_val = date.fromisoformat(entry_date_str) if entry_date_str else date.today()
-    form = ProductionEntryForm(prefix=f"form-{form_count}", section=section, entry_date=entry_date_val)
+
+    # Create a dummy formset to leverage its bulk fetching logic
+    dummy_formset = ProductionEntryFormSet(form_kwargs={"section": section, "entry_date": entry_date_val})
+
+    form = ProductionEntryForm(
+        prefix=f"form-{form_count}",
+        section=section,
+        entry_date=entry_date_val,
+        target_rules_cache=dummy_formset.target_rules_cache,
+        worker_choices=dummy_formset.worker_choices,
+        item_choices=dummy_formset.item_choices,
+    )
     html = render_to_string(
         "production/entry_row.html",
         {"form": form, "index": form_count, "next_index": form_count + 1},
