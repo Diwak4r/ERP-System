@@ -1,3 +1,0 @@
-## 2026-03-09 - Django FormSet N+1 Query Optimization
-**Learning:** In Django FormSets, each form instance's `ModelChoiceField` and model logic can trigger independent database queries, leading to O(N) queries where N is the number of forms. Simply providing a pre-evaluated QuerySet to the field does not prevent individual existence checks during validation.
-**Action:** Use a `BaseFormSet` to bulk-fetch related data (like `TargetRule` snapshots) and evaluate choices once (e.g., as a list of tuples) to pass them to individual forms via `get_form_kwargs`. This reduces query counts significantly (saved 3 queries for 2 forms in `ProductionEntryFormSet`, more for larger sets).

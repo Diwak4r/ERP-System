@@ -58,20 +58,15 @@ class ProductionEntryForm(forms.ModelForm):
         self.entry_date = entry_date
         self.target_rules_cache = target_rules_cache
 
-        active_workers = Worker.objects.filter(is_active=True)
-        active_items = Item.objects.filter(is_active=True)
-
         if worker_choices is not None:
             self.fields["worker"].choices = worker_choices
-            self.fields["worker"].queryset = active_workers
         else:
-            self.fields["worker"].queryset = active_workers
+            self.fields["worker"].queryset = Worker.objects.filter(is_active=True)
 
         if item_choices is not None:
             self.fields["item"].choices = item_choices
-            self.fields["item"].queryset = active_items
         else:
-            self.fields["item"].queryset = active_items
+            self.fields["item"].queryset = Item.objects.filter(is_active=True)
 
 
         if section:
