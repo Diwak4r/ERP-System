@@ -60,14 +60,12 @@ class Item(models.Model):
 
 
 class TargetRuleQuerySet(models.QuerySet):
-    def for_section_item_date(self, *, section: Section, item: Item, target_date: date):
-        return self.filter(
-            section=section,
-            item=item,
-            start_date__lte=target_date,
-        ).filter(models.Q(end_date__gte=target_date) | models.Q(end_date__isnull=True)).order_by(
-            "-start_date"
-        )
+    def for_section_item_date(self, *, section: Section, item: Item | None, target_date: date):
+        filters = models.Q(section=section, start_date__lte=target_date)
+        if item:
+            filters &= models.Q(item=item)
+
+        return self.filter(filters).filter(models.Q(end_date__gte=target_date) | models.Q(end_date__isnull=True)).order_by("-start_date")
 
 
 class TargetRule(models.Model):
