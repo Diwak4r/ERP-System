@@ -1,0 +1,3 @@
+## 2026-03-11 - [Django FormSet N+1 Query Optimization]
+**Learning:** Django's `ModelChoiceField` triggers individual database queries during validation (`to_python`) and rendering even if the queryset is pre-evaluated. Business logic that performs lookups per form (like fetching `TargetRule` based on item and date) also creates an N+1 pattern.
+**Action:** Use a custom `BaseFormSet` to bulk-fetch all required related data in `__init__` and pass it to individual forms via `get_form_kwargs`. To eliminate validation queries, replace `ModelChoiceField` with `ChoiceField` populated from the cache, and implement custom `clean_<field>` methods to return the model instances.
