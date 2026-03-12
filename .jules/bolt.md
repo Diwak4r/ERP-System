@@ -1,0 +1,3 @@
+## 2026-03-12 - [Optimizing Django FormSets]
+**Learning:** Django's `ModelChoiceField` triggers individual database queries (`to_python`) for each row during form validation, even if the queryset is pre-evaluated. However, pre-fetching custom business logic (like `TargetRule` snapshots) still provides significant $O(N)$ to $O(1)$ savings. Additionally, using the correct type hint `models.QuerySet` is critical as `forms.QuerySet` does not exist and causes a runtime crash.
+**Action:** Always use `BaseFormSet` to bulk-fetch data and pass it to forms via `form_kwargs`. Use `models.QuerySet` for type hinting and ensure `from __future__ import annotations` is used for modern union types.
