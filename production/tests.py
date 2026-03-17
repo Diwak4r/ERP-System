@@ -103,3 +103,46 @@ def test_permissions_enforced(supervisor_user, section, worker, item, client):
     )
     assert response.status_code == 403
     assert ProductionEntry.objects.count() == 0
+
+
+def test_production_entry_formset_queries(section, worker, item, admin_user, django_assert_num_queries):
+    # Create 5 items with target rules
+    items = [item]
+    for i in range(4):
+        itm = Item.objects.create(name=f"Widget {i}", sku=f"SKU-{i}")
+        items.append(itm)
+        TargetRule.objects.create(
+            section=section,
+            item=itm,
+            target_qty=Decimal("100"),
+            shift_hours=Decimal("8"),
+            start_date=date.today(),
+        )
+    TargetRule.objects.create(
+        section=section,
+        item=item,
+        target_qty=Decimal("100"),
+        shift_hours=Decimal("8"),
+        start_date=date.today(),
+    )
+
+    from .forms import ProductionEntryFormSet
+
+    form_kwargs = {"section": section, "entry_date": date.today()}
+    data = {
+        "form-TOTAL_FORMS": "5",
+        "form-INITIAL_FORMS": "0",
+        "form-MIN_NUM_FORMS": "0",
+    }
+    for i, itm in enumerate(items):
+        data[f"form-{i}-worker"] = worker.id
+        data[f"form-{i}-item"] = itm.id
+        data[f"form-{i}-actual_qty"] = "100"
+        data[f"form-{i}-target_qty"] = "100"
+        data[f"form-{i}-shift_hours"] = "8"
+
+    # With optimizations, query count should be significantly lower.
+    # Baseline for 5 forms was ~26. Current optimized is around 23 for 5 forms.
+    with django_assert_num_queries(23):
+        formset = ProductionEntryFormSet(data=data, prefix="form", form_kwargs=form_kwargs)
+        assert formset.is_valid()
