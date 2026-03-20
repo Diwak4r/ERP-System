@@ -1,0 +1,3 @@
+## 2025-05-15 - [Optimize ProductionEntryFormSet by bulk-fetching choices and target rules]
+**Learning:** Django's `ModelChoiceField` within a `FormSet` triggers a database query for each form instance to populate choices during rendering. Additionally, custom hydration logic (like `_hydrate_targets`) that performs per-item lookups during validation causes another N queries.
+**Action:** Use a custom `BaseFormSet` to pre-evaluate choices and bulk-fetch business logic data (like `TargetRule`) into a cache (dict). Pass these pre-fetched values to each form instance via `get_form_kwargs` and `__init__`. This significantly reduces the total query count.
