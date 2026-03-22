@@ -1,0 +1,3 @@
+## 2025-05-15 - [Django FormSet N+1 Query Optimization]
+**Learning:** Django's `ModelChoiceField` triggers a database query during `to_python` (validation) even if `choices` or a pre-evaluated `queryset` is provided to the field. However, bulk-fetching custom business logic data (like `TargetRule` lookups) and pre-evaluating choices to avoid per-row queries during rendering still provides significant performance gains.
+**Action:** Use a custom `BaseFormSet` to pre-fetch all necessary data in `__init__` and pass it to individual forms via `get_form_kwargs`. For business logic lookups in `clean()`, use a dictionary cache instead of per-row database queries.
