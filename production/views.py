@@ -18,7 +18,11 @@ ROLE_SUPERVISOR = "SUPERVISOR"
 
 
 def _user_has_role(user, role: str) -> bool:
-    return user.is_superuser or user.groups.filter(name=role).exists()
+    if user.is_superuser:
+        return True
+    if not hasattr(user, "_group_names_cache"):
+        user._group_names_cache = set(user.groups.values_list("name", flat=True))
+    return role in user._group_names_cache
 
 
 def _available_sections(user):
@@ -91,7 +95,6 @@ def production_entry(request: HttpRequest) -> HttpResponse:
 
 @login_required
 def production_entry_row(request: HttpRequest) -> HttpResponse:
-    sections = _available_sections(request.user)
     section_id = request.GET.get("section")
     entry_date_str = request.GET.get("entry_date")
     form_count = int(request.GET.get("form_count", 0))

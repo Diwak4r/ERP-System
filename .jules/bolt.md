@@ -1,3 +1,7 @@
 ## 2026-03-23 - [Optimized ProductionEntryFormSet with bulk pre-fetching]
 **Learning:** Django's `ModelChoiceField` in a bound form triggers a database query during validation (`to_python`) to verify the primary key exists; providing a pre-evaluated queryset or choices in `__init__` does not eliminate these individual validation queries. However, bulk-fetching custom business logic data (like `TargetRule`) and pre-evaluating choices for rendering still provide significant database query savings (N-1 queries saved per business logic lookup).
 **Action:** When optimizing FormSets, focus on bulk-fetching business logic data and pre-evaluating choices for rendering, but be aware that individual validation queries for `ModelChoiceField` are harder to eliminate without overriding the field's validation logic.
+
+## 2026-03-24 - [Optimized RBAC queries via caching on User object]
+**Learning:** Redundant database hits for user group checks (RBAC) can be eliminated by caching the user's group names on the `user` object instance during the first check. This is especially effective when multiple roles are checked or when the same role is checked multiple times in a single request lifecycle (e.g., in templates or complex views).
+**Action:** Use a helper like `_user_has_role` that populates a `_group_names_cache` on the `user` object to ensure RBAC checks are $O(1)$ after the first $O(N)$ bulk fetch.
