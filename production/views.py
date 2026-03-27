@@ -18,7 +18,17 @@ ROLE_SUPERVISOR = "SUPERVISOR"
 
 
 def _user_has_role(user, role: str) -> bool:
-    return user.is_superuser or user.groups.filter(name=role).exists()
+    """
+    Checks if a user has a specific role.
+    Caches the user's group names on the instance to avoid redundant database queries
+    when performing multiple RBAC checks during the request lifecycle.
+    """
+    if user.is_superuser:
+        return True
+    if not hasattr(user, "_group_names_cache"):
+        # Fetch all group names at once and cache them in a set for O(1) lookup
+        user._group_names_cache = set(user.groups.values_list("name", flat=True))
+    return role in user._group_names_cache
 
 
 def _available_sections(user):
