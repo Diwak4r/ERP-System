@@ -1,3 +1,7 @@
 ## 2026-03-23 - [Optimized ProductionEntryFormSet with bulk pre-fetching]
 **Learning:** Django's `ModelChoiceField` in a bound form triggers a database query during validation (`to_python`) to verify the primary key exists; providing a pre-evaluated queryset or choices in `__init__` does not eliminate these individual validation queries. However, bulk-fetching custom business logic data (like `TargetRule`) and pre-evaluating choices for rendering still provide significant database query savings (N-1 queries saved per business logic lookup).
 **Action:** When optimizing FormSets, focus on bulk-fetching business logic data and pre-evaluating choices for rendering, but be aware that individual validation queries for `ModelChoiceField` are harder to eliminate without overriding the field's validation logic.
+
+## 2023-10-27 - [Multiple Performance Wins: RBAC, Admin N+1, and Bulk Creation]
+**Learning:** Significant performance gains can be achieved by addressing common Django pitfalls: (1) Caching user roles/groups on the `user` object instance avoids redundant DB hits in permission-heavy views. (2) `list_select_related` in `ModelAdmin` is a one-line fix for N+1 queries in the admin. (3) Replacing O(N) `.save()` calls with `bulk_create` reduces DB round-trips to O(1), provided model logic (like `set_outcomes()`) is called manually beforehand.
+**Action:** Always check for N+1 queries in admin list views using `list_select_related`. Use `bulk_create` for batch operations in views. Cache repeated authorization checks on the request's `user` object.
