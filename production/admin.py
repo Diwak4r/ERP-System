@@ -26,12 +26,16 @@ class ItemAdmin(admin.ModelAdmin):
 @admin.register(TargetRule)
 class TargetRuleAdmin(admin.ModelAdmin):
     list_display = ("section", "item", "target_qty", "shift_hours", "start_date", "end_date")
+    # Optimize: Reduce queries from 1 + (rows * 2) to 1 constant query by pre-fetching foreign keys.
+    list_select_related = ("section", "item")
     search_fields = ("section__name", "item__name")
     list_filter = ("section", "item")
 
 
 @admin.register(ProductionEntry)
 class ProductionEntryAdmin(admin.ModelAdmin):
+    # Optimize: Reduce queries from 1 + (rows * 3) to 1 constant query by pre-fetching foreign keys.
+    list_select_related = ("section", "worker", "item")
     list_display = (
         "entry_date",
         "section",
