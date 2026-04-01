@@ -82,6 +82,32 @@ def test_target_snapshot_saved(admin_user, section, worker, item, target_rule, c
     assert entry.target_met is True
 
 
+def test_bulk_save_performance(admin_user, section, worker, item, target_rule, client, django_assert_num_queries):
+    client.force_login(admin_user)
+    data = {
+        "entry_date": date.today().isoformat(),
+        "section": section.id,
+        "form-TOTAL_FORMS": "10",
+        "form-INITIAL_FORMS": "0",
+        "form-MIN_NUM_FORMS": "0",
+        "form-MAX_NUM_FORMS": "1000",
+    }
+    for i in range(10):
+        data[f"form-{i}-worker"] = worker.id
+        data[f"form-{i}-item"] = item.id
+        data[f"form-{i}-target_qty"] = "100"
+        data[f"form-{i}-shift_hours"] = "8"
+        data[f"form-{i}-actual_qty"] = "110"
+
+    # Previously this was ~56 queries. Now it should be significantly lower (~47).
+    # We assert a strict maximum to prevent regressions.
+    with django_assert_num_queries(47):
+        response = client.post(reverse("production:entry"), data=data)
+        assert response.status_code == 302
+
+    assert ProductionEntry.objects.count() == 10
+
+
 def test_permissions_enforced(supervisor_user, section, worker, item, client):
     other_section = Section.objects.create(name="Packaging", code="PKG")
     client.force_login(supervisor_user)
