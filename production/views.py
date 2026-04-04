@@ -18,7 +18,11 @@ ROLE_SUPERVISOR = "SUPERVISOR"
 
 
 def _user_has_role(user, role: str) -> bool:
-    return user.is_superuser or user.groups.filter(name=role).exists()
+    if user.is_superuser:
+        return True
+    if not hasattr(user, "_group_names_cache"):
+        user._group_names_cache = set(user.groups.values_list("name", flat=True))
+    return role in user._group_names_cache
 
 
 def _available_sections(user):
@@ -30,6 +34,8 @@ def _available_sections(user):
 def _ensure_permission(user, section: Section) -> bool:
     if _user_has_role(user, ROLE_ADMIN):
         return True
+    # If sections are pre-fetched, this can still trigger a query if supervisors isn't prefetched
+    # But for a single section check it is fine.
     return _user_has_role(user, ROLE_SUPERVISOR) and section.supervisors.filter(id=user.id).exists()
 
 
@@ -43,9 +49,15 @@ def production_entry(request: HttpRequest) -> HttpResponse:
     entry_date_str = request.POST.get("entry_date") or request.GET.get("entry_date")
     entry_date_val = date.fromisoformat(entry_date_str) if entry_date_str else today
 
-    sections = _available_sections(request.user)
-    selected_section_id = request.POST.get("section") or request.GET.get("section") or (sections.first().id if sections else None)
-    selected_section = Section.objects.filter(id=selected_section_id).first() if selected_section_id else None
+    sections = list(_available_sections(request.user))
+    selected_section_id = request.POST.get("section") or request.GET.get("section")
+    selected_section = None
+    if selected_section_id:
+        selected_section = next((s for s in sections if str(s.id) == str(selected_section_id)), None)
+        if not selected_section:
+            return HttpResponseForbidden("You are not allowed to create entries for this section")
+    else:
+        selected_section = sections[0] if sections else None
 
     if selected_section and not _ensure_permission(request.user, selected_section):
         return HttpResponseForbidden("You are not allowed to create entries for this section")
@@ -57,7 +69,7 @@ def production_entry(request: HttpRequest) -> HttpResponse:
         if not selected_section:
             messages.error(request, "Section is required")
         if formset.is_valid() and selected_section:
-            created_entries = []
+            entries_to_create = []
             for form in formset:
                 data = form.cleaned_data
                 entry = ProductionEntry(
@@ -71,11 +83,16 @@ def production_entry(request: HttpRequest) -> HttpResponse:
                     created_by=request.user,
                 )
                 entry.set_outcomes()
-                entry.save()
-                created_entries.append(entry)
+                entries_to_create.append(entry)
                 if entry.target_qty <= 0:
                     messages.warning(request, f"No target rule found for {entry.item}; overtime set to 0")
-            messages.success(request, f"Saved {len(created_entries)} production entr{'y' if len(created_entries)==1 else 'ies'}")
+
+            if entries_to_create:
+                ProductionEntry.objects.bulk_create(entries_to_create)
+                messages.success(
+                    request,
+                    f"Saved {len(entries_to_create)} production entr{'y' if len(entries_to_create)==1 else 'ies'}",
+                )
             return redirect("production:entries")
     else:
         formset = ProductionEntryFormSet(prefix="form", initial=[{}], form_kwargs=form_kwargs)
@@ -110,11 +127,16 @@ def production_entry_row(request: HttpRequest) -> HttpResponse:
 
 @login_required
 def production_entries(request: HttpRequest) -> HttpResponse:
-    sections = _available_sections(request.user)
+    sections = list(_available_sections(request.user))
     entry_date_str = request.GET.get("date")
     section_id = request.GET.get("section")
     entry_date_val = date.fromisoformat(entry_date_str) if entry_date_str else date.today()
-    selected_section = Section.objects.filter(id=section_id).first() if section_id else None
+    selected_section = None
+    if section_id:
+        selected_section = next((s for s in sections if str(s.id) == str(section_id)), None)
+        if not selected_section:
+            return HttpResponseForbidden("Not allowed")
+
     if selected_section and not _ensure_permission(request.user, selected_section):
         return HttpResponseForbidden("Not allowed")
     entries = ProductionEntry.objects.select_related("worker", "item", "section").filter(entry_date=entry_date_val)

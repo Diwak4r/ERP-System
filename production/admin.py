@@ -28,10 +28,12 @@ class TargetRuleAdmin(admin.ModelAdmin):
     list_display = ("section", "item", "target_qty", "shift_hours", "start_date", "end_date")
     search_fields = ("section__name", "item__name")
     list_filter = ("section", "item")
+    list_select_related = ("section", "item")
 
 
 @admin.register(ProductionEntry)
 class ProductionEntryAdmin(admin.ModelAdmin):
+    list_select_related = ("section", "worker", "item")
     list_display = (
         "entry_date",
         "section",
