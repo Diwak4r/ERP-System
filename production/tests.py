@@ -153,3 +153,138 @@ def test_item_aggregate_view_invalid_date(admin_user, section, client):
     client.force_login(admin_user)
     response = client.get(reverse("production:report-item-aggregate"), {"start_date": "invalid", "end_date": "invalid"})
     assert response.status_code == 200
+
+from django.core.exceptions import ValidationError
+from decimal import Decimal
+from datetime import timedelta
+from .models import DayLock, DailyLedger, ProcessFlowEdge, AuditEvent
+
+@pytest.mark.django_db
+def test_daylock_prevents_creation(supervisor_user, section, worker, item):
+    today = date.today()
+    DayLock.objects.create(section=section, lock_date=today, is_locked=True)
+
+    entry = ProductionEntry(
+        entry_date=today,
+        section=section,
+        worker=worker,
+        item=item,
+        target_qty=Decimal("100"),
+        actual_qty=Decimal("120"),
+        shift_hours=Decimal("8"),
+        created_by=supervisor_user
+    )
+    with pytest.raises(ValidationError, match="Cannot create or modify entries for a locked day"):
+        entry.clean()
+
+@pytest.mark.django_db
+def test_hard_block_inventory_gate(supervisor_user, section, worker, item):
+    today = date.today()
+    # Create another section to act as upstream
+    section1 = Section.objects.create(name="Section 1", code="S1")
+
+    # Create a flow edge: Section 1 -> Section (downstream)
+    ProcessFlowEdge.objects.create(item=item, from_section=section1, to_section=section, lead_days=0)
+
+    # Give the downstream section 100 available units in its ledger
+    DailyLedger.objects.create(
+        date=today,
+        section=section,
+        item=item,
+        opening_balance=Decimal("100")
+    )
+
+    # Try to create 120 actual_qty in the downstream section. Should fail.
+    entry = ProductionEntry(
+        entry_date=today,
+        section=section,
+        worker=worker,
+        item=item,
+        target_qty=Decimal("100"),
+        actual_qty=Decimal("120"),
+        shift_hours=Decimal("8"),
+        created_by=supervisor_user
+    )
+    with pytest.raises(ValidationError, match="Hard block"):
+        entry.clean()
+
+    # Valid amount should pass
+    entry.actual_qty = Decimal("80")
+    entry.clean() # Should not raise
+
+@pytest.mark.django_db
+def test_audit_logging_admin(client, admin_user, section, worker, item):
+    today = date.today()
+
+    # Needs to be a superuser or staff to access admin panel
+    admin_user.is_staff = True
+    admin_user.is_superuser = True
+    admin_user.save()
+
+    entry = ProductionEntry.objects.create(
+        entry_date=today,
+        section=section,
+        worker=worker,
+        item=item,
+        target_qty=Decimal("100"),
+        actual_qty=Decimal("50"),
+        shift_hours=Decimal("8"),
+        created_by=admin_user
+    )
+
+    client.force_login(admin_user)
+
+    # Update via admin
+    url = f"/admin/production/productionentry/{entry.pk}/change/"
+    response = client.post(url, {
+        "entry_date": today.isoformat(),
+        "section": section.pk,
+        "worker": worker.pk,
+        "item": item.pk,
+        "target_qty": "100",
+        "actual_qty": "60",
+        "shift_hours": "8",
+        "overtime_hours": "0",
+        "created_by": admin_user.pk,
+        "_save": "Save",
+    })
+
+    # Verify AuditEvent was created
+    audit = AuditEvent.objects.filter(model_name="ProductionEntry").first()
+    assert audit is not None
+    assert audit.action == "UPDATE"
+    assert Decimal(audit.before_json["actual_qty"]) == Decimal("50.00")
+    assert Decimal(audit.after_json["actual_qty"]) == Decimal("60.00")
+
+@pytest.mark.django_db
+def test_signal_updates_ledger(supervisor_user, section, worker, item):
+    today = date.today()
+
+    entry = ProductionEntry.objects.create(
+        entry_date=today,
+        section=section,
+        worker=worker,
+        item=item,
+        target_qty=Decimal("100"),
+        actual_qty=Decimal("50"),
+        shift_hours=Decimal("8"),
+        created_by=supervisor_user
+    )
+
+    ledger = DailyLedger.objects.get(date=today, section=section, item=item)
+    assert ledger.output == Decimal("50.00")
+
+    # Create another entry
+    ProductionEntry.objects.create(
+        entry_date=today,
+        section=section,
+        worker=worker,
+        item=item,
+        target_qty=Decimal("100"),
+        actual_qty=Decimal("25"),
+        shift_hours=Decimal("8"),
+        created_by=supervisor_user
+    )
+
+    ledger.refresh_from_db()
+    assert ledger.output == Decimal("75.00")

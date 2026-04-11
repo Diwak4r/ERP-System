@@ -42,6 +42,49 @@ class BaseProductionEntryFormSet(forms.BaseFormSet):
         })
         return kwargs
 
+    def clean(self):
+        super().clean()
+        if any(self.errors):
+            return
+
+        if not self.section or not self.entry_date:
+            return
+
+        from .models import DayLock, ProcessFlowEdge, DailyLedger
+        from decimal import Decimal
+        from datetime import date
+
+        if self.entry_date < date.today():
+            raise forms.ValidationError("Backdated edits are strictly prohibited.")
+
+        lock = DayLock.objects.filter(section=self.section, lock_date=self.entry_date).first()
+        if lock and lock.is_locked:
+            raise forms.ValidationError("Cannot create or modify entries for a locked day.")
+
+        # Aggregate totals per item in this submission
+        totals = {}
+        for form in self.forms:
+            if not form.cleaned_data or form.cleaned_data.get("DELETE"):
+                continue
+            item = form.cleaned_data.get("item")
+            qty = form.cleaned_data.get("actual_qty") or Decimal("0")
+            if item:
+                totals[item] = totals.get(item, Decimal("0")) + qty
+
+        # Check hard block
+        for item, new_qty in totals.items():
+            if ProcessFlowEdge.objects.filter(to_section=self.section, item=item).exists():
+                ledger = DailyLedger.objects.filter(date=self.entry_date, section=self.section, item=item).first()
+                # in a formset submission (creates), new_total_output is current output + new_qty
+                other_output = ledger.output if ledger else Decimal("0")
+                new_total_output = other_output + new_qty
+                available = Decimal("0")
+                if ledger:
+                    available = ledger.opening_balance + ledger.received_from_prev + ledger.manual_received
+
+                if new_total_output > available:
+                    raise forms.ValidationError(f"Hard block: Total actual quantity for {item} exceeds available inventory ({available}).")
+
 
 class ProductionEntryForm(forms.ModelForm):
     def __init__(

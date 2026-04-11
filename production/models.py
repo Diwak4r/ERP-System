@@ -127,10 +127,105 @@ class ProductionEntry(models.Model):
         return (ratio * shift_hours).quantize(Decimal("0.01"))
 
     def clean(self) -> None:
-        if self.entry_date and self.entry_date < date.today():
-            # Hook for future immutability rules; raising validation for new entries could block.
-            return
+        if self.entry_date and self.section_id:
+            from .models import DayLock, ProcessFlowEdge, DailyLedger
+
+            # 1. DayLock check / Strict No Backdate Edits
+            if self.entry_date < date.today():
+                raise ValidationError("Backdated edits are strictly prohibited.")
+
+            lock = DayLock.objects.filter(section=self.section, lock_date=self.entry_date).first()
+            if lock and lock.is_locked:
+                raise ValidationError("Cannot create or modify entries for a locked day.")
+
+            # 2. Hard Block Inventory Gate
+            # If there are incoming edges, this section is downstream, meaning its output is constrained by inventory
+            incoming_edges = ProcessFlowEdge.objects.filter(to_section=self.section, item=self.item).exists()
+            if incoming_edges:
+                ledger = DailyLedger.objects.filter(date=self.entry_date, section=self.section, item=self.item).first()
+                # Determine current output
+                current_actual = self.actual_qty or Decimal("0")
+                if self.pk:
+                    # Subtract the old actual_qty to get the "other" output
+                    old_entry = ProductionEntry.objects.get(pk=self.pk)
+                    other_output = (ledger.output if ledger else Decimal("0")) - old_entry.actual_qty
+                else:
+                    other_output = ledger.output if ledger else Decimal("0")
+
+                new_total_output = other_output + current_actual
+
+                # Available inventory is opening + received + manual_received
+                # Note: waste is removed from closing balance, but available inventory for production is the sum of these 3
+                available = Decimal("0")
+                if ledger:
+                    available = ledger.opening_balance + ledger.received_from_prev + ledger.manual_received
+
+                if new_total_output > available:
+                    raise ValidationError(f"Hard block: Actual quantity exceeds available inventory ({available}).")
 
     def set_outcomes(self) -> None:
         self.target_met = self.actual_qty >= self.target_qty if self.target_qty is not None else False
         self.overtime_hours = self.compute_overtime(self.actual_qty, self.target_qty, self.shift_hours)
+
+class ProcessFlowEdge(models.Model):
+    item = models.ForeignKey(Item, on_delete=models.CASCADE)
+    from_section = models.ForeignKey(Section, related_name="outgoing_edges", on_delete=models.CASCADE)
+    to_section = models.ForeignKey(Section, related_name="incoming_edges", on_delete=models.CASCADE)
+    lead_days = models.IntegerField(default=0)
+
+    class Meta:
+        unique_together = ("item", "from_section", "to_section")
+
+    def __str__(self) -> str:
+        return f"{self.item}: {self.from_section} -> {self.to_section}"
+
+
+class DayLock(models.Model):
+    section = models.ForeignKey(Section, on_delete=models.CASCADE)
+    lock_date = models.DateField()
+    is_locked = models.BooleanField(default=True)
+    locked_at = models.DateTimeField(auto_now_add=True)
+    locked_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True)
+
+    class Meta:
+        unique_together = ("section", "lock_date")
+
+    def __str__(self) -> str:
+        return f"{self.section} on {self.lock_date} (Locked: {self.is_locked})"
+
+
+class AuditEvent(models.Model):
+    actor = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True)
+    action = models.CharField(max_length=50)
+    model_name = models.CharField(max_length=100)
+    object_id = models.CharField(max_length=100)
+    before_json = models.JSONField(null=True, blank=True)
+    after_json = models.JSONField(null=True, blank=True)
+    reason = models.TextField(blank=True)
+    timestamp = models.DateTimeField(auto_now_add=True)
+    ip = models.GenericIPAddressField(null=True, blank=True)
+
+    class Meta:
+        ordering = ["-timestamp"]
+
+
+class DailyLedger(models.Model):
+    date = models.DateField()
+    section = models.ForeignKey(Section, on_delete=models.CASCADE)
+    item = models.ForeignKey(Item, on_delete=models.CASCADE)
+
+    opening_balance = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal("0.00"))
+    received_from_prev = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal("0.00"))
+    manual_received = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal("0.00"))
+    output = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal("0.00"))
+    waste = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal("0.00"))
+    closing_balance = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal("0.00"))
+
+    class Meta:
+        unique_together = ("date", "section", "item")
+
+    def recompute(self):
+        self.closing_balance = self.opening_balance + self.received_from_prev + self.manual_received - self.output - self.waste
+
+    def __str__(self) -> str:
+        return f"{self.date} - {self.section} - {self.item} (Bal: {self.closing_balance})"
