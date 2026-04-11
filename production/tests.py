@@ -1,10 +1,9 @@
-from datetime import date, timedelta
+from datetime import date
 from decimal import Decimal
 
 import pytest
 from django.contrib.auth import get_user_model
 from django.contrib.auth.models import Group
-from django.core.exceptions import PermissionDenied
 from django.urls import reverse
 
 from .models import Item, ProductionEntry, Section, TargetRule, Worker
@@ -103,3 +102,54 @@ def test_permissions_enforced(supervisor_user, section, worker, item, client):
     )
     assert response.status_code == 403
     assert ProductionEntry.objects.count() == 0
+
+def test_daily_section_summary_view(admin_user, section, worker, item, client):
+    # Setup some entries
+    ProductionEntry.objects.create(
+        entry_date=date.today(), section=section, worker=worker, item=item,
+        target_qty=Decimal("100"), actual_qty=Decimal("110"), shift_hours=Decimal("8"), created_by=admin_user
+    )
+
+    client.force_login(admin_user)
+    response = client.get(reverse("production:report-daily-section"))
+
+    assert response.status_code == 200
+    assert b"Daily Section Summary" in response.content
+    assert b"110" in response.content # Actual qty
+    assert str(worker.name).encode() in response.content
+
+def test_item_aggregate_view(admin_user, section, worker, item, client):
+    ProductionEntry.objects.create(
+        entry_date=date.today(), section=section, worker=worker, item=item,
+        target_qty=Decimal("100"), actual_qty=Decimal("110"), shift_hours=Decimal("8"), created_by=admin_user
+    )
+
+    client.force_login(admin_user)
+    response = client.get(reverse("production:report-item-aggregate"))
+
+    assert response.status_code == 200
+    assert b"Item Aggregate Report" in response.content
+    assert b"110.0" in response.content # Hit rate
+
+def test_worker_history_view(admin_user, section, worker, item, client):
+    ProductionEntry.objects.create(
+        entry_date=date.today(), section=section, worker=worker, item=item,
+        target_qty=Decimal("100"), actual_qty=Decimal("90"), shift_hours=Decimal("8"),
+        created_by=admin_user, target_met=False
+    )
+
+    client.force_login(admin_user)
+    response = client.get(reverse("production:report-worker-history", args=[worker.id]))
+
+    assert response.status_code == 200
+    assert str(worker.name).encode() in response.content
+    assert b"90.00" in response.content # Actual qty
+def test_daily_section_summary_view_invalid_date(admin_user, section, client):
+    client.force_login(admin_user)
+    response = client.get(reverse("production:report-daily-section"), {"date": "invalid-date"})
+    assert response.status_code == 200
+
+def test_item_aggregate_view_invalid_date(admin_user, section, client):
+    client.force_login(admin_user)
+    response = client.get(reverse("production:report-item-aggregate"), {"start_date": "invalid", "end_date": "invalid"})
+    assert response.status_code == 200
