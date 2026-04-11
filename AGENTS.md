@@ -39,6 +39,7 @@ The core objective is to create a seamless, centralized ERP system to track fact
 - Keep secrets out of git. Use `.env` + env vars only.
 - Use PostgreSQL (not sqlite) for anything production-like.
 - Enforce RBAC and "no backdated edits" with audit logs.
+- **Backend:** Use **Supabase (PostgreSQL)** for the production database. Ensure the Django `DATABASES` setting is configured to use the Supabase connection string securely via environment variables.
 
 ## Code style
 - Python: Django, HTMX, ruff, mypy, pytest.
