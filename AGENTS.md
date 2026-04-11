@@ -3,35 +3,28 @@
 You are a senior full-stack engineer developing an automated, production-ready in-house ERP/Tracker system.
 
 ## Business Context & Client Vision
-The core objective is to create a seamless, centralized ERP system to track factory production flow, calculate worker performance and overtime based on targets, monitor machinery health, and strictly manage inventory transfer between production stages. 
+The core objective is to create a seamless, centralized ERP system to track factory production flow, calculate worker performance, monitor machinery health, and strictly manage inventory transfer.
 
-**CRITICAL RULE:** Data integrity is paramount. The system must prevent users from manipulating or changing backdated entries (a major pain point with their old Excel spreadsheets) to ensure accurate wastage and production tracking.
+### 1. Strict Data Immutability (The "Anti-Excel" Rule)
+- **The Core Pain Point:** In their current Excel sheets, workers alter historical data.
+- **The Requirement:** The ERP must have strict data locking. Once a daily production log is submitted or a day is closed, the system must strictly prohibit users from editing backdated entries ("back date ja ke data change na kare"). Any corrections to past data require an Admin override.
 
-### Core Modules
-1. **Raw Material Module:** Track initial inputs into the factory.
-2. **Daily Production & Target Tracking:** Tracks daily output per person/section. Calculates standard daily targets versus achieved quantities.
-3. **Section-to-Section Flow Tracker:** Tracks WIP. The verified output total of Section 1 MUST automatically become the input/opening balance for Section 2.
-4. **Machinery Breakdown/Downtime:** Logging system for the factory floor to record machine downtime, duration, and reason.
-5. **Automated Overtime Calculator:** Logic engine calculates overtime based on **piece-rate production**, not strictly hours (e.g., Target=100/8hrs. Actual=150 pieces -> Auto-calculate 4 hours overtime).
-6. **Attendance & Daily Wage:** Tracks employee presence in specific sections on a given day.
-7. **Store Requisition:** Request system where workers request additional materials, sending a notification/popup to Admin or Store Manager for approval.
+### 2. Granular UI/UX & Interaction Expectations
+- **Visual Cues:** The system must use automated visual alerts. If a worker fails their daily target or a machine experiences downtime, the system must automatically highlight that cell/row in red ("laal kar de").
+- **Double-Click Drill-Downs:** Highly interactive dashboard. The Admin must be able to double-click a specific worker's name (e.g., Ram Bahadur) on the daily summary to instantly open a pop-up showing their day-by-day historical performance.
+- **Strict Dropdown Architecture:** To prevent manual errors by floor supervisors, almost all inputs (employee names, item types, machine IDs) MUST use pre-populated dropdown lists, not text fields.
 
-### User Roles
-- **Admin/Boss:** Has access to the high-level dashboard, view aggregated reports, track total factory wastage, and approve requisitions.
-- **Supervisor/Data Entry (Factory Floor):** Enters daily production data, logs machine breakdowns, initiates requisitions. Must have an extremely user-friendly interface with pre-filled dropdowns.
-- **Store Manager:** Receives and approves/denies store requisition requests.
+### 3. The "Hard Block" Inventory Gate
+- **The Logic:** If Section 1 submits a verified output of 260kg, that exact number is hardcoded as Section 2's opening balance. If the supervisor in Section 2 attempts to claim they received 300kg, the system must actively block the entry and flag the discrepancy to catch phantom production or material theft.
 
-### Data Variables & Tracking Constraints
-- **Dropdowns:** Employee names (e.g., Ram Bahadur), Item names (e.g., "Bhutte Khadkulo 6 inch").
-- **Validation Logic:** Strict enforcement. If Section 1 produces 260kg, Section 2 cannot claim 300kg input. Flag mismatches immediately.
-- **Wastage:** Automatically calculated. (Input 400kg - Output 350kg = 50kg Wastage).
+### 4. Real-Time Requisition Pop-Ups
+- **The Logic:** When a factory floor supervisor requests materials, a real-time pop-up notification/alert must appear on the Admin or Store Manager's screen allowing them to review and approve the request immediately.
 
-### Reporting & Dashboards
-- **Daily High-Level Summary:** Total production of finished goods.
-- **Employee History Report:** Day-by-day historical breakdown comparing target vs achieved output.
-- **Section-Wise Aggregation:** Total sum of all individuals within a specific section.
-- **Machinery Health Report:** Visual indicator (marked red) for offline machines.
-- **Visual Charts:** Daily production trends and finished goods outputs.
+### 5. Piece-to-Time Overtime Formula
+- **The Logic:** Overtime is calculated by a proportional piece-rate formula converted into hours. Example: If the 8-hour target is 100 pieces and the worker makes 150 pieces, the system MUST automatically recognize the 50 extra pieces and convert that exactly into 4 hours of overtime. Needs a configurable background formula defining "difficulty" per item.
+
+### 6. Master Data Migration (Tally/Excel)
+- **The Logic:** The client relies on Tally and Excel currently. The system requires a backend capability to import the master list of items and metrics directly via CSV/Excel, ensuring the new ERP dropdown menus perfectly match their current accounting terminology.
 
 ## Non-negotiables
 - Prioritize correctness, data integrity, auditability, and a simple UI.
@@ -48,7 +41,7 @@ The core objective is to create a seamless, centralized ERP system to track fact
 - Enforce RBAC and "no backdated edits" with audit logs.
 
 ## Code style
-- Python: ruff, mypy, pytest.
+- Python: Django, HTMX, ruff, mypy, pytest.
 - Django best practices: settings split, strict CSRF, secure cookies, timezone-aware datetimes.
 
 ## Delivery expectations for each task
