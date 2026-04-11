@@ -1,0 +1,33 @@
+<h2>History for {{ worker.name }} ({{ worker.employee_code }})</h2>
+<p>Last 30 entries.</p>
+
+<table border="1" width="100%">
+    <thead>
+        <tr>
+            <th>Date</th>
+            <th>Section</th>
+            <th>Item</th>
+            <th>Target</th>
+            <th>Actual</th>
+            <th>Target Met</th>
+            <th>Overtime Hours</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for entry in entries %}
+        <tr style="background-color: {% if entry.target_met %}#d4edda{% else %}#f8d7da{% endif %};">
+            <td>{{ entry.entry_date }}</td>
+            <td>{{ entry.section.name }}</td>
+            <td>{{ entry.item.name }}</td>
+            <td>{{ entry.target_qty }}</td>
+            <td>{{ entry.actual_qty }}</td>
+            <td>{{ entry.target_met|yesno:"Yes,No" }}</td>
+            <td>{{ entry.overtime_hours }}</td>
+        </tr>
+        {% empty %}
+        <tr>
+            <td colspan="7">No history found.</td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
