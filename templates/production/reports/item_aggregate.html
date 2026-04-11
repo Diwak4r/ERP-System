@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Item Aggregate Report</title>
+</head>
+<body>
+    <h1>Item Aggregate Report</h1>
+
+    <form method="get">
+        <label for="start_date">Start Date:</label>
+        <input type="date" id="start_date" name="start_date" value="{{ start_date|date:'Y-m-d' }}">
+
+        <label for="end_date">End Date:</label>
+        <input type="date" id="end_date" name="end_date" value="{{ end_date|date:'Y-m-d' }}">
+
+        <button type="submit">Filter</button>
+    </form>
+
+    <h2>Totals from {{ start_date }} to {{ end_date }}</h2>
+
+    <table border="1">
+        <thead>
+            <tr>
+                <th>Item</th>
+                <th>Unit</th>
+                <th>Total Target</th>
+                <th>Total Actual</th>
+                <th>Hit Rate (%)</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for item in item_summary %}
+            <tr>
+                <td>{{ item.item__name }}</td>
+                <td>{{ item.item__unit }}</td>
+                <td>{{ item.total_target }}</td>
+                <td>{{ item.total_actual }}</td>
+                <td>{{ item.hit_rate|floatformat:2 }}%</td>
+            </tr>
+            {% empty %}
+            <tr>
+                <td colspan="5">No production recorded in this date range.</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</body>
+</html>

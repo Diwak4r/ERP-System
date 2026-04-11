@@ -5,10 +5,11 @@ from decimal import Decimal
 
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
-from django.contrib.auth.models import Group
 from django.http import HttpRequest, HttpResponse, HttpResponseForbidden
 from django.shortcuts import get_object_or_404, redirect, render
 from django.template.loader import render_to_string
+from django.db.models import Sum, F, ExpressionWrapper, FloatField, Case, When, Value, BooleanField
+from django.db.models.functions import Cast
 
 from .forms import ProductionEntryForm, ProductionEntryFormSet
 from .models import Item, ProductionEntry, Section, TargetRule, Worker
@@ -91,14 +92,16 @@ def production_entry(request: HttpRequest) -> HttpResponse:
 
 @login_required
 def production_entry_row(request: HttpRequest) -> HttpResponse:
-    sections = _available_sections(request.user)
     section_id = request.GET.get("section")
     entry_date_str = request.GET.get("entry_date")
     form_count = int(request.GET.get("form_count", 0))
     section = get_object_or_404(Section, id=section_id) if section_id else None
     if section and not _ensure_permission(request.user, section):
         return HttpResponseForbidden("Not allowed")
-    entry_date_val = date.fromisoformat(entry_date_str) if entry_date_str else date.today()
+    try:
+        entry_date_val = date.fromisoformat(entry_date_str) if entry_date_str else date.today()
+    except ValueError:
+        entry_date_val = date.today()
     form = ProductionEntryForm(prefix=f"form-{form_count}", section=section, entry_date=entry_date_val)
     html = render_to_string(
         "production/entry_row.html",
@@ -113,7 +116,10 @@ def production_entries(request: HttpRequest) -> HttpResponse:
     sections = _available_sections(request.user)
     entry_date_str = request.GET.get("date")
     section_id = request.GET.get("section")
-    entry_date_val = date.fromisoformat(entry_date_str) if entry_date_str else date.today()
+    try:
+        entry_date_val = date.fromisoformat(entry_date_str) if entry_date_str else date.today()
+    except ValueError:
+        entry_date_val = date.today()
     selected_section = Section.objects.filter(id=section_id).first() if section_id else None
     if selected_section and not _ensure_permission(request.user, selected_section):
         return HttpResponseForbidden("Not allowed")
@@ -128,3 +134,112 @@ def production_entries(request: HttpRequest) -> HttpResponse:
         "selected_section": selected_section,
     }
     return render(request, "production/entries_list.html", context)
+
+
+@login_required
+def daily_section_summary(request: HttpRequest) -> HttpResponse:
+    sections = _available_sections(request.user)
+    entry_date_str = request.GET.get("date")
+    section_id = request.GET.get("section")
+
+    try:
+        entry_date_val = date.fromisoformat(entry_date_str) if entry_date_str else date.today()
+    except ValueError:
+        entry_date_val = date.today()
+    selected_section = Section.objects.filter(id=section_id).first() if section_id else (sections.first() if sections else None)
+
+    if selected_section and not _ensure_permission(request.user, selected_section):
+        return HttpResponseForbidden("Not allowed")
+
+    entries = ProductionEntry.objects.filter(entry_date=entry_date_val)
+    if selected_section:
+        entries = entries.filter(section=selected_section)
+
+    # Aggregate per item
+    item_summary = entries.values('item__name').annotate(
+        total_actual=Sum('actual_qty'),
+        total_target=Sum('target_qty')
+    ).order_by('item__name')
+
+    # Aggregate per worker
+    worker_summary = entries.values('worker__id', 'worker__name', 'worker__employee_code').annotate(
+            total_actual=Sum('actual_qty'),
+            total_target=Sum('target_qty'),
+        ).annotate(
+            target_hit=Case(
+                When(total_actual__gte=F('total_target'), then=Value(True)),
+                default=Value(False),
+                output_field=BooleanField()
+            )
+        ).order_by('worker__name')
+
+    worker_count = entries.values('worker').distinct().count()
+
+    context = {
+        "sections": sections,
+        "selected_section": selected_section,
+        "entry_date": entry_date_val,
+        "item_summary": item_summary,
+        "worker_summary": worker_summary,
+        "worker_count": worker_count,
+    }
+    return render(request, "production/reports/daily_section_summary.html", context)
+
+@login_required
+def item_aggregate(request: HttpRequest) -> HttpResponse:
+    sections = _available_sections(request.user)
+    start_date_str = request.GET.get("start_date")
+    end_date_str = request.GET.get("end_date")
+
+    try:
+        start_date_val = date.fromisoformat(start_date_str) if start_date_str else date.today().replace(day=1)
+    except ValueError:
+        start_date_val = date.today().replace(day=1)
+
+    try:
+        end_date_val = date.fromisoformat(end_date_str) if end_date_str else date.today()
+    except ValueError:
+        end_date_val = date.today()
+
+    entries = ProductionEntry.objects.filter(
+        entry_date__gte=start_date_val,
+        entry_date__lte=end_date_val,
+        section__in=sections
+    )
+
+    item_summary = entries.values('item__name', 'item__unit').annotate(
+        total_actual=Sum('actual_qty'),
+        total_target=Sum('target_qty'),
+    ).annotate(
+        hit_rate=Case(
+            When(total_target__gt=0, then=ExpressionWrapper(
+                Cast('total_actual', FloatField()) / Cast('total_target', FloatField()) * 100.0,
+                output_field=FloatField()
+            )),
+            default=Value(0.0),
+            output_field=FloatField()
+        )
+    ).order_by('item__name')
+
+    context = {
+        "start_date": start_date_val,
+        "end_date": end_date_val,
+        "item_summary": item_summary,
+    }
+    return render(request, "production/reports/item_aggregate.html", context)
+
+@login_required
+def worker_history(request: HttpRequest, worker_id: int) -> HttpResponse:
+    worker = get_object_or_404(Worker, id=worker_id)
+    sections = _available_sections(request.user)
+
+    entries = ProductionEntry.objects.filter(
+        worker=worker,
+        section__in=sections
+    ).select_related('item', 'section').order_by('-entry_date')[:30] # Last 30 entries
+
+    context = {
+        "worker": worker,
+        "entries": entries,
+    }
+    return render(request, "production/reports/worker_history_modal.html", context)
