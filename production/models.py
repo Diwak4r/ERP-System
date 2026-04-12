@@ -92,6 +92,40 @@ class TargetRule(models.Model):
             raise ValidationError("End date cannot be earlier than start date")
 
 
+class DayLock(models.Model):
+    section = models.ForeignKey(Section, on_delete=models.CASCADE)
+    lock_date = models.DateField()
+    locked_at = models.DateTimeField(auto_now_add=True)
+    locked_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name="day_locks")
+    is_locked = models.BooleanField(default=True)
+
+    class Meta:
+        unique_together = ("section", "lock_date")
+        ordering = ["-lock_date", "section__name"]
+
+    def __str__(self) -> str:  # pragma: no cover - repr helper
+        status = "Locked" if self.is_locked else "Unlocked"
+        return f"{self.section} on {self.lock_date} ({status})"
+
+
+class AuditEvent(models.Model):
+    actor = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True)
+    action = models.CharField(max_length=50)  # e.g., 'CREATE', 'UPDATE', 'DELETE'
+    model_name = models.CharField(max_length=100)
+    object_id = models.CharField(max_length=100)
+    before_data = models.JSONField(null=True, blank=True)
+    after_data = models.JSONField(null=True, blank=True)
+    reason = models.TextField()
+    timestamp = models.DateTimeField(auto_now_add=True)
+    ip = models.GenericIPAddressField(null=True, blank=True)
+
+    class Meta:
+        ordering = ["-timestamp"]
+
+    def __str__(self) -> str:  # pragma: no cover - repr helper
+        return f"{self.actor} - {self.action} {self.model_name}({self.object_id}) at {self.timestamp}"
+
+
 class ProductionEntry(models.Model):
     entry_date = models.DateField()
     section = models.ForeignKey(Section, on_delete=models.PROTECT)
@@ -128,8 +162,12 @@ class ProductionEntry(models.Model):
 
     def clean(self) -> None:
         if self.entry_date and self.entry_date < date.today():
-            # Hook for future immutability rules; raising validation for new entries could block.
-            return
+            if not getattr(self, "section", None):
+                return
+
+            day_lock = DayLock.objects.filter(section=self.section, lock_date=self.entry_date).first()
+            if not day_lock or day_lock.is_locked:
+                raise ValidationError("Cannot create or modify backdated entries unless the day is unlocked by an Admin.")
 
     def set_outcomes(self) -> None:
         self.target_met = self.actual_qty >= self.target_qty if self.target_qty is not None else False

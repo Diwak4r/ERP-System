@@ -153,3 +153,93 @@ def test_item_aggregate_view_invalid_date(admin_user, section, client):
     client.force_login(admin_user)
     response = client.get(reverse("production:report-item-aggregate"), {"start_date": "invalid", "end_date": "invalid"})
     assert response.status_code == 200
+
+from datetime import timedelta
+from django.core.exceptions import ValidationError
+from .models import DayLock, AuditEvent
+from django.test import RequestFactory
+from .middleware import IPLoggingMiddleware, get_current_request
+
+def test_backdated_entry_prevention(admin_user, section, worker, item):
+    past_date = date.today() - timedelta(days=1)
+
+    entry = ProductionEntry(
+        entry_date=past_date,
+        section=section,
+        worker=worker,
+        item=item,
+        target_qty=Decimal("100"),
+        actual_qty=Decimal("120"),
+        shift_hours=Decimal("8"),
+        created_by=admin_user
+    )
+
+    with pytest.raises(ValidationError, match="Cannot create or modify backdated entries"):
+        entry.clean()
+
+def test_daylock_admin_override(admin_user, section, worker, item):
+    past_date = date.today() - timedelta(days=1)
+
+    # Create unlocked DayLock
+    DayLock.objects.create(section=section, lock_date=past_date, locked_by=admin_user, is_locked=False)
+
+    entry = ProductionEntry(
+        entry_date=past_date,
+        section=section,
+        worker=worker,
+        item=item,
+        target_qty=Decimal("100"),
+        actual_qty=Decimal("120"),
+        shift_hours=Decimal("8"),
+        created_by=admin_user
+    )
+
+    # Should not raise
+    entry.clean()
+
+def test_audit_event_logging(admin_user, section, worker, item):
+    from django.contrib.admin.sites import AdminSite
+    from .admin import ProductionEntryAdmin
+
+    entry = ProductionEntry.objects.create(
+        entry_date=date.today(),
+        section=section,
+        worker=worker,
+        item=item,
+        target_qty=Decimal("100"),
+        actual_qty=Decimal("100"),
+        shift_hours=Decimal("8"),
+        created_by=admin_user
+    )
+
+    factory = RequestFactory()
+    request = factory.post('/admin/')
+    request.user = admin_user
+    request.META['REMOTE_ADDR'] = '127.0.0.1'
+
+    middleware = IPLoggingMiddleware(lambda r: None)
+    middleware(request)
+
+    admin_obj = ProductionEntryAdmin(ProductionEntry, AdminSite())
+
+    class DummyForm:
+        cleaned_data = {"change_reason": "Correcting typo"}
+
+    admin_obj.save_model(request, entry, DummyForm(), change=True)
+
+    audit_event = AuditEvent.objects.latest('id')
+    assert audit_event.action == "UPDATE"
+    assert audit_event.reason == "Correcting typo"
+    assert audit_event.actor == admin_user
+    assert "100.00" in audit_event.before_data
+    assert audit_event.ip == '127.0.0.1'
+
+def test_ip_middleware():
+    factory = RequestFactory()
+    request = factory.get('/')
+    request.META['REMOTE_ADDR'] = '192.168.1.1'
+
+    middleware = IPLoggingMiddleware(lambda r: None)
+    middleware(request)
+
+    assert get_current_request() == request
