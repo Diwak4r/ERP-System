@@ -13,7 +13,7 @@ class BaseProductionEntryFormSet(forms.BaseFormSet):
         self.form_kwargs = kwargs.get("form_kwargs", {})
         self.section = self.form_kwargs.get("section")
         self.entry_date = self.form_kwargs.get("entry_date")
-        self.target_rules_cache = {}
+        self.target_rules_cache: dict[int, TargetRule] = {}
         self.worker_qs = Worker.objects.filter(is_active=True)
         self.item_qs = Item.objects.filter(is_active=True)
 
