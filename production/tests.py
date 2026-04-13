@@ -1,12 +1,16 @@
-from datetime import date
+from datetime import date, timedelta
 from decimal import Decimal
 
 import pytest
 from django.contrib.auth import get_user_model
 from django.contrib.auth.models import Group
+from django.core.exceptions import ValidationError
+from django.test import RequestFactory
+from django.contrib.admin.sites import AdminSite
 from django.urls import reverse
 
-from .models import Item, ProductionEntry, Section, TargetRule, Worker
+from .admin import ProductionEntryAdmin
+from .models import Item, ProductionEntry, Section, TargetRule, Worker, DayLock, ProcessFlowEdge, DailyLedger, AuditEvent
 
 pytestmark = pytest.mark.django_db
 
@@ -149,17 +153,11 @@ def test_daily_section_summary_view_invalid_date(admin_user, section, client):
     response = client.get(reverse("production:report-daily-section"), {"date": "invalid-date"})
     assert response.status_code == 200
 
+
 def test_item_aggregate_view_invalid_date(admin_user, section, client):
     client.force_login(admin_user)
     response = client.get(reverse("production:report-item-aggregate"), {"start_date": "invalid", "end_date": "invalid"})
     assert response.status_code == 200
-
-from datetime import timedelta
-from django.core.exceptions import ValidationError
-from django.test import RequestFactory
-from .models import DayLock, ProcessFlowEdge, DailyLedger, AuditEvent
-from .admin import ProductionEntryAdmin
-from django.contrib.admin.sites import AdminSite
 
 @pytest.mark.django_db
 def test_daylock_prevents_backdated_edits(admin_user, section, worker, item):
