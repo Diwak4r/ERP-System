@@ -153,3 +153,57 @@ def test_item_aggregate_view_invalid_date(admin_user, section, client):
     client.force_login(admin_user)
     response = client.get(reverse("production:report-item-aggregate"), {"start_date": "invalid", "end_date": "invalid"})
     assert response.status_code == 200
+
+from datetime import timedelta
+from django.core.exceptions import ValidationError
+from django.test import RequestFactory
+from .models import DayLock, ProcessFlowEdge, DailyLedger, AuditEvent
+from .admin import ProductionEntryAdmin
+from django.contrib.admin.sites import AdminSite
+
+@pytest.mark.django_db
+def test_daylock_prevents_backdated_edits(admin_user, section, worker, item):
+    today = date.today()
+    past_date = today - timedelta(days=2)
+
+    # Test Anti-Excel rule (Backdate without lock)
+    pe1 = ProductionEntry(entry_date=past_date, section=section, worker=worker, item=item, target_qty=10, actual_qty=5, shift_hours=8, created_by=admin_user)
+    with pytest.raises(ValidationError, match="Cannot create backdated production entries."):
+        pe1.clean()
+
+    # Test DayLock block
+    DayLock.objects.create(section=section, lock_date=today, is_locked=True)
+    pe2 = ProductionEntry(entry_date=today, section=section, worker=worker, item=item, target_qty=10, actual_qty=5, shift_hours=8, created_by=admin_user)
+    with pytest.raises(ValidationError, match=f"Section {section.name} is locked for {today}."):
+        pe2.clean()
+
+@pytest.mark.django_db
+def test_hard_block_inventory_gate(admin_user, worker, item):
+    today = date.today()
+    sec1 = Section.objects.create(name="Sec1", code="S1")
+    sec2 = Section.objects.create(name="Sec2", code="S2")
+
+    ProcessFlowEdge.objects.create(item=item, from_section=sec1, to_section=sec2)
+    DailyLedger.objects.create(date=today, section=sec2, item=item, opening_balance=Decimal("10.00"))
+
+    # Output 15 > Inventory 10
+    pe = ProductionEntry(entry_date=today, section=sec2, worker=worker, item=item, target_qty=10, actual_qty=15, shift_hours=8, created_by=admin_user)
+    with pytest.raises(ValidationError, match="Hard Block: Output"):
+        pe.clean()
+
+@pytest.mark.django_db
+def test_audit_event_created_on_admin_edit(admin_user, section, worker, item):
+    request_factory = RequestFactory()
+    request = request_factory.post('/admin/')
+    request.user = admin_user
+
+    admin_site = AdminSite()
+    pe_admin = ProductionEntryAdmin(ProductionEntry, admin_site)
+
+    entry = ProductionEntry.objects.create(entry_date=date.today(), section=section, worker=worker, item=item, target_qty=10, actual_qty=5, shift_hours=8, created_by=admin_user)
+
+    # Trigger save_model manually to simulate Admin Update
+    entry.actual_qty = 10
+    pe_admin.save_model(request, entry, None, change=True)
+
+    assert AuditEvent.objects.filter(model_name="ProductionEntry", action="UPDATE").count() == 1

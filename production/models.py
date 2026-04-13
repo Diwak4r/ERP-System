@@ -127,10 +127,124 @@ class ProductionEntry(models.Model):
         return (ratio * shift_hours).quantize(Decimal("0.01"))
 
     def clean(self) -> None:
-        if self.entry_date and self.entry_date < date.today():
-            # Hook for future immutability rules; raising validation for new entries could block.
-            return
+        # Anti-Excel Immutability Rule
+        if self.pk is None and self.entry_date and self.entry_date < date.today():
+            raise ValidationError("Cannot create backdated production entries.")
+
+        # Check if the day is locked
+        if getattr(self, "section", None) and getattr(self, "entry_date", None):
+            lock = DayLock.objects.filter(section=self.section, lock_date=self.entry_date, is_locked=True).first()
+            if lock:
+                raise ValidationError(f"Section {self.section.name} is locked for {self.entry_date}.")
+
+        # Hard Block Inventory Gate
+        if getattr(self, "section", None) and getattr(self, "item", None) and getattr(self, "entry_date", None):
+            # Is there an inbound edge for this item to this section?
+            inbound_edge = ProcessFlowEdge.objects.filter(item=self.item, to_section=self.section).first()
+            if inbound_edge:
+                # Calculate available inventory
+                ledger, _ = DailyLedger.objects.get_or_create(
+                    date=self.entry_date, section=self.section, item=self.item
+                )
+                available = ledger.opening_balance + ledger.received_from_prev + ledger.manual_received
+
+                # Get current total output for this section/item/date excluding this entry
+                current_output_qs = ProductionEntry.objects.filter(
+                    section=self.section, item=self.item, entry_date=self.entry_date
+                )
+                if self.pk:
+                    current_output_qs = current_output_qs.exclude(pk=self.pk)
+
+                current_output = current_output_qs.aggregate(total=models.Sum("actual_qty"))["total"] or Decimal("0.00")
+                proposed_output = current_output + (self.actual_qty or Decimal("0.00"))
+
+                if proposed_output > available:
+                    raise ValidationError(
+                        f"Hard Block: Output ({proposed_output}) exceeds available inventory ({available}) "
+                        f"for {self.item} in {self.section.name}."
+                    )
 
     def set_outcomes(self) -> None:
         self.target_met = self.actual_qty >= self.target_qty if self.target_qty is not None else False
         self.overtime_hours = self.compute_overtime(self.actual_qty, self.target_qty, self.shift_hours)
+
+    def save(self, *args, **kwargs):
+        super().save(*args, **kwargs)
+        # Update Ledger post save
+        if self.section and self.item and self.entry_date:
+            ledger, _ = DailyLedger.objects.get_or_create(
+                date=self.entry_date, section=self.section, item=self.item
+            )
+            # Recompute total output
+            total_output = ProductionEntry.objects.filter(
+                section=self.section, item=self.item, entry_date=self.entry_date
+            ).aggregate(total=models.Sum("actual_qty"))["total"] or Decimal("0.00")
+
+            ledger.output_qty = total_output
+            ledger.save(update_fields=["output_qty"])
+
+class DayLock(models.Model):
+    section = models.ForeignKey(Section, on_delete=models.CASCADE)
+    lock_date = models.DateField()
+    locked_at = models.DateTimeField(auto_now_add=True)
+    locked_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True)
+    is_locked = models.BooleanField(default=True)
+
+    class Meta:
+        unique_together = ("section", "lock_date")
+        ordering = ["-lock_date", "section__name"]
+
+    def __str__(self) -> str:
+        return f"{self.section} on {self.lock_date} ({'Locked' if self.is_locked else 'Unlocked'})"
+
+class AuditEvent(models.Model):
+    actor = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True)
+    action = models.CharField(max_length=50) # e.g., 'CREATE', 'UPDATE', 'DELETE', 'UNLOCK'
+    model_name = models.CharField(max_length=100)
+    object_id = models.CharField(max_length=255)
+    before_data = models.JSONField(null=True, blank=True)
+    after_data = models.JSONField(null=True, blank=True)
+    reason = models.TextField(null=True, blank=True)
+    timestamp = models.DateTimeField(auto_now_add=True)
+    ip_address = models.GenericIPAddressField(null=True, blank=True)
+
+    class Meta:
+        ordering = ["-timestamp"]
+
+    def __str__(self) -> str:
+        return f"{self.action} on {self.model_name} by {self.actor} at {self.timestamp}"
+
+class ProcessFlowEdge(models.Model):
+    item = models.ForeignKey(Item, on_delete=models.CASCADE)
+    from_section = models.ForeignKey(Section, on_delete=models.CASCADE, related_name="outbound_edges")
+    to_section = models.ForeignKey(Section, on_delete=models.CASCADE, related_name="inbound_edges")
+    lead_days = models.IntegerField(default=0)
+
+    class Meta:
+        unique_together = ("item", "from_section", "to_section")
+        ordering = ["item__name", "from_section__name"]
+
+    def __str__(self) -> str:
+        return f"{self.item}: {self.from_section} -> {self.to_section} ({self.lead_days} days)"
+
+class DailyLedger(models.Model):
+    date = models.DateField()
+    section = models.ForeignKey(Section, on_delete=models.CASCADE)
+    item = models.ForeignKey(Item, on_delete=models.CASCADE)
+
+    opening_balance = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal("0.00"))
+    received_from_prev = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal("0.00"))
+    manual_received = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal("0.00"))
+    output_qty = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal("0.00"))
+    waste_qty = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal("0.00"))
+
+    class Meta:
+        unique_together = ("date", "section", "item")
+        ordering = ["-date", "section__name", "item__name"]
+
+    def __str__(self) -> str:
+        return f"{self.date} - {self.section} - {self.item}"
+
+    @property
+    def closing_balance(self) -> Decimal:
+        return self.opening_balance + self.received_from_prev + self.manual_received - self.output_qty - self.waste_qty
