@@ -8,6 +8,8 @@ from django import forms
 from .models import Item, ProductionEntry, Section, TargetRule, Worker
 
 
+from django.core.exceptions import ValidationError
+
 class BaseProductionEntryFormSet(forms.BaseFormSet):
     def __init__(self, *args, **kwargs):
         self.form_kwargs = kwargs.get("form_kwargs", {})
@@ -105,6 +107,30 @@ class ProductionEntryForm(forms.ModelForm):
     def clean(self):
         cleaned = super().clean()
         self._hydrate_targets()
+
+        # Instantiate a temporary model to run model validations
+        if not self.errors and self.cleaned_data.get("worker") and self.cleaned_data.get("item"):
+            entry = ProductionEntry(
+                entry_date=self.entry_date,
+                section=self.section,
+                worker=self.cleaned_data.get("worker"),
+                item=self.cleaned_data.get("item"),
+                actual_qty=self.cleaned_data.get("actual_qty") or 0,
+            )
+            # Use instance pk if updating an existing instance
+            if self.instance.pk if hasattr(self, 'instance') else None:
+                entry.pk = self.instance.pk
+
+            try:
+                entry.clean()
+            except ValidationError as e:
+                # Add model validation errors to the form
+                if hasattr(e, 'messages'):
+                    for msg in e.messages:
+                        self.add_error(None, msg)
+                else:
+                    self.add_error(None, str(e))
+
         return cleaned
 
 
