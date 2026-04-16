@@ -205,3 +205,105 @@ def test_audit_event_created_on_admin_edit(admin_user, section, worker, item):
     pe_admin.save_model(request, entry, None, change=True)
 
     assert AuditEvent.objects.filter(model_name="ProductionEntry", action="UPDATE").count() == 1
+
+@pytest.mark.django_db
+def test_recompute_ledger_cascades(admin_user, worker, item):
+    today = date.today()
+    sec1 = Section.objects.create(name="Mixing", code="MIX")
+    sec2 = Section.objects.create(name="Baking", code="BAK")
+    ProcessFlowEdge.objects.create(item=item, from_section=sec1, to_section=sec2, lead_days=0)
+
+    # Output in sec1
+    ProductionEntry.objects.create(
+        entry_date=today, section=sec1, worker=worker, item=item,
+        target_qty=100, actual_qty=50, shift_hours=8, created_by=admin_user
+    )
+
+    # Check sec1 ledger output
+    l1 = DailyLedger.objects.get(date=today, section=sec1, item=item)
+    assert l1.output_qty == Decimal("50.00")
+
+    # Check sec2 ledger received
+    l2 = DailyLedger.objects.get(date=today, section=sec2, item=item)
+    assert l2.received_from_prev == Decimal("50.00")
+    assert l2.total_available == Decimal("50.00")
+
+@pytest.mark.django_db
+def test_ledger_anomaly_flagging(admin_user, worker, item, client):
+    today = date.today()
+    sec1 = Section.objects.create(name="Mixing", code="MIX")
+    DailyLedger.objects.create(date=today, section=sec1, item=item, opening_balance=Decimal("10.00"))
+
+    # Create output larger than available. We must bypass form validation to force the DB state for the view test
+    # but clean() will stop us. Let's just create the ledger manually.
+    l1 = DailyLedger.objects.get(date=today, section=sec1, item=item)
+    l1.output_qty = Decimal("20.00")
+    l1.save()
+
+    client.force_login(admin_user)
+    resp = client.get(reverse("production:ledger"))
+    assert resp.status_code == 200
+    assert b"table-danger" in resp.content
+    assert b"Anomaly!" in resp.content
+
+@pytest.mark.django_db
+def test_waste_entry_form(admin_user, worker, item, client):
+    today = date.today()
+    sec1 = Section.objects.create(name="Mixing", code="MIX")
+    DailyLedger.objects.create(date=today, section=sec1, item=item, opening_balance=Decimal("10.00"), waste_qty=Decimal("0.00"))
+
+    client.force_login(admin_user)
+    # Get the form to get management form data
+    resp = client.get(reverse("production:waste-entry"))
+
+    # Check that the form displays the ledger row correctly
+    assert resp.status_code == 200
+    assert b"Widget" in resp.content
+
+    # The form prefix is 'form' by default for modelformset_factory. We need to parse what we get.
+    # But since we only have one ledger, we know form-TOTAL_FORMS = 1
+    resp = client.post(reverse("production:waste-entry"), data={
+        "date": today.isoformat(),
+        "section": sec1.id,
+        "form-TOTAL_FORMS": "1",
+        "form-INITIAL_FORMS": "1",
+        "form-MIN_NUM_FORMS": "0",
+        "form-MAX_NUM_FORMS": "1000",
+        "form-0-id": DailyLedger.objects.get(date=today, section=sec1, item=item).id,
+        "form-0-waste_qty": "2.50",
+    })
+
+    # Follow redirect
+    assert resp.status_code in [302, 200]
+
+    l1 = DailyLedger.objects.get(date=today, section=sec1, item=item)
+    assert l1.waste_qty == Decimal("2.50")
+    assert l1.closing_balance == Decimal("7.50")
+
+@pytest.mark.django_db
+def test_waste_entry_daylock(admin_user, worker, item, client):
+    today = date.today()
+    sec1 = Section.objects.create(name="Mixing", code="MIX")
+    l1 = DailyLedger.objects.create(date=today, section=sec1, item=item, opening_balance=Decimal("10.00"), waste_qty=Decimal("0.00"))
+    DayLock.objects.create(section=sec1, lock_date=today, is_locked=True)
+
+    client.force_login(admin_user)
+    resp = client.post(reverse("production:waste-entry"), data={
+        "date": today.isoformat(),
+        "section": sec1.id,
+        "form-TOTAL_FORMS": "1",
+        "form-INITIAL_FORMS": "1",
+        "form-MIN_NUM_FORMS": "0",
+        "form-MAX_NUM_FORMS": "1000",
+        "form-0-id": l1.id,
+        "form-0-waste_qty": "2.50",
+    })
+
+    # Form should fail validation due to DayLock
+    assert resp.status_code == 200
+    assert len(resp.context["formset"].errors) > 0
+    assert "is locked for" in str(resp.context["formset"].errors[0])
+
+    # Assert waste not changed
+    l1.refresh_from_db()
+    assert l1.waste_qty == Decimal("0.00")

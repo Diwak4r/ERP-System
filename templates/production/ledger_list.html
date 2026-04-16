@@ -1,0 +1,55 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="container mt-4">
+    <h2>Daily Ledger</h2>
+    <form method="get" class="mb-3 d-flex gap-2 align-items-center" hx-get="{% url 'production:ledger' %}" hx-target="#ledger-table-container">
+        <label for="date" class="form-label mb-0">Date:</label>
+        <input type="date" name="date" id="date" class="form-control w-auto" value="{{ ledger_date|date:'Y-m-d' }}">
+
+        <label for="section" class="form-label mb-0">Section:</label>
+        <select name="section" id="section" class="form-select w-auto">
+            {% for section in sections %}
+            <option value="{{ section.id }}" {% if selected_section and selected_section.id == section.id %}selected{% endif %}>{{ section.name }}</option>
+            {% endfor %}
+        </select>
+        <button type="submit" class="btn btn-primary">Filter</button>
+    </form>
+
+    <div class="table-responsive" id="ledger-table-container">
+        {% block ledger_table %}
+        <table class="table table-bordered table-striped">
+            <thead class="table-dark">
+                <tr>
+                    <th>Item</th>
+                    <th>Opening</th>
+                    <th>Received</th>
+                    <th>Total Available</th>
+                    <th>Output</th>
+                    <th>Waste</th>
+                    <th>Closing</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for ledger in ledgers %}
+                {% with avail=ledger.total_available %}
+                <tr class="{% if ledger.output_qty > avail %}table-danger{% endif %}">
+                    <td>{{ ledger.item.name }}</td>
+                    <td>{{ ledger.opening_balance }}</td>
+                    <td>{{ ledger.received_from_prev }}</td>
+                    <td>{{ avail }}</td>
+                    <td>{{ ledger.output_qty }} {% if ledger.output_qty > avail %}<span class="badge bg-danger">Anomaly!</span>{% endif %}</td>
+                    <td>{{ ledger.waste_qty }}</td>
+                    <td>{{ ledger.closing_balance }}</td>
+                </tr>
+                {% endwith %}
+                {% empty %}
+                <tr>
+                    <td colspan="7" class="text-center">No ledger entries found.</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+            {% endblock %}
+    </div>
+</div>
+{% endblock %}

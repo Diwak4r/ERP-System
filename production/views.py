@@ -11,8 +11,8 @@ from django.template.loader import render_to_string
 from django.db.models import Sum, F, ExpressionWrapper, FloatField, Case, When, Value, BooleanField
 from django.db.models.functions import Cast
 
-from .forms import ProductionEntryForm, ProductionEntryFormSet
-from .models import Item, ProductionEntry, Section, TargetRule, Worker
+from .forms import ProductionEntryForm, ProductionEntryFormSet, WasteEntryFormSet
+from .models import Item, ProductionEntry, Section, TargetRule, Worker, DailyLedger
 
 ROLE_ADMIN = "ADMIN"
 ROLE_SUPERVISOR = "SUPERVISOR"
@@ -243,3 +243,123 @@ def worker_history(request: HttpRequest, worker_id: int) -> HttpResponse:
         "entries": entries,
     }
     return render(request, "production/reports/worker_history_modal.html", context)
+
+
+@login_required
+def ledger_view(request: HttpRequest) -> HttpResponse:
+    sections = _available_sections(request.user)
+    date_str = request.GET.get("date")
+    section_id = request.GET.get("section")
+
+    try:
+        ledger_date = date.fromisoformat(date_str) if date_str else date.today()
+    except ValueError:
+        ledger_date = date.today()
+
+    selected_section = Section.objects.filter(id=section_id).first() if section_id else (sections.first() if sections else None)
+
+    if selected_section and not _ensure_permission(request.user, selected_section):
+        return HttpResponseForbidden("Not allowed")
+
+    ledgers = DailyLedger.objects.filter(date=ledger_date)
+    if selected_section:
+        ledgers = ledgers.filter(section=selected_section)
+
+    context = {
+        "sections": sections,
+        "selected_section": selected_section,
+        "ledger_date": ledger_date,
+        "ledgers": ledgers.select_related("item", "section"),
+    }
+    if request.headers.get("HX-Request"):
+        # For a simple htmx implementation without specialized packages,
+        # we can just render the same template but the template will check for htmx
+        # or we render a specific partial. We'll render the whole template and let HTMX swap out the target.
+        pass
+    return render(request, "production/ledger_list.html", context)
+
+
+@login_required
+def waste_entry(request: HttpRequest) -> HttpResponse:
+    sections = _available_sections(request.user)
+    date_str = request.GET.get("date") or request.POST.get("date")
+    section_id = request.GET.get("section") or request.POST.get("section")
+
+    try:
+        entry_date = date.fromisoformat(date_str) if date_str else date.today()
+    except ValueError:
+        entry_date = date.today()
+
+    selected_section = Section.objects.filter(id=section_id).first() if section_id else (sections.first() if sections else None)
+
+    if selected_section and not _ensure_permission(request.user, selected_section):
+        return HttpResponseForbidden("Not allowed")
+
+    # Load ledgers for the day/section so we can add waste_qty
+    qs = DailyLedger.objects.none()
+    if selected_section:
+        qs = DailyLedger.objects.filter(date=entry_date, section=selected_section).order_by("item__name")
+
+    if request.method == "POST":
+        formset = WasteEntryFormSet(request.POST, queryset=qs)
+        if formset.is_valid():
+            formset.save()
+            messages.success(request, "Waste entries updated successfully.")
+            return redirect("production:waste-entry")
+    else:
+        formset = WasteEntryFormSet(queryset=qs)
+
+    context = {
+        "sections": sections,
+        "selected_section": selected_section,
+        "entry_date": entry_date,
+        "formset": formset,
+    }
+    return render(request, "production/waste_form.html", context)
+
+
+@login_required
+def wastage_report(request: HttpRequest) -> HttpResponse:
+    sections = _available_sections(request.user)
+    start_date_str = request.GET.get("start_date")
+    end_date_str = request.GET.get("end_date")
+
+    try:
+        start_date = date.fromisoformat(start_date_str) if start_date_str else date.today().replace(day=1)
+    except ValueError:
+        start_date = date.today().replace(day=1)
+
+    try:
+        end_date = date.fromisoformat(end_date_str) if end_date_str else date.today()
+    except ValueError:
+        end_date = date.today()
+
+    ledgers = DailyLedger.objects.filter(
+        date__gte=start_date,
+        date__lte=end_date,
+        section__in=sections
+    )
+
+    report_data = ledgers.values("section__name", "item__name").annotate(
+        total_waste=Sum("waste_qty"),
+        total_opening=Sum("opening_balance"),
+        total_received=Sum("received_from_prev") + Sum("manual_received"),
+    ).annotate(
+        total_available=F("total_opening") + F("total_received")
+    ).annotate(
+        waste_percent=Case(
+            When(total_available__gt=0, then=ExpressionWrapper(
+                Cast("total_waste", FloatField()) / Cast("total_available", FloatField()) * 100.0,
+                output_field=FloatField()
+            )),
+            default=Value(0.0),
+            output_field=FloatField()
+        )
+    ).order_by("section__name", "item__name")
+
+    context = {
+        "start_date": start_date,
+        "end_date": end_date,
+        "report_data": report_data,
+    }
+    return render(request, "production/reports/wastage_report.html", context)

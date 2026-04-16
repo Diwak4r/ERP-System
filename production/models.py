@@ -170,18 +170,16 @@ class ProductionEntry(models.Model):
 
     def save(self, *args, **kwargs):
         super().save(*args, **kwargs)
-        # Update Ledger post save
         if self.section and self.item and self.entry_date:
-            ledger, _ = DailyLedger.objects.get_or_create(
-                date=self.entry_date, section=self.section, item=self.item
-            )
-            # Recompute total output
-            total_output = ProductionEntry.objects.filter(
-                section=self.section, item=self.item, entry_date=self.entry_date
-            ).aggregate(total=models.Sum("actual_qty"))["total"] or Decimal("0.00")
+            recompute_ledger(self.entry_date, self.section, self.item)
 
-            ledger.output_qty = total_output
-            ledger.save(update_fields=["output_qty"])
+    def delete(self, *args, **kwargs):
+        section = self.section
+        item = self.item
+        entry_date = self.entry_date
+        super().delete(*args, **kwargs)
+        if section and item and entry_date:
+            recompute_ledger(entry_date, section, item)
 
 class DayLock(models.Model):
     section = models.ForeignKey(Section, on_delete=models.CASCADE)
@@ -245,6 +243,42 @@ class DailyLedger(models.Model):
     def __str__(self) -> str:
         return f"{self.date} - {self.section} - {self.item}"
 
+
+    @property
+    def total_available(self) -> Decimal:
+        return self.opening_balance + self.received_from_prev + self.manual_received
+
     @property
     def closing_balance(self) -> Decimal:
         return self.opening_balance + self.received_from_prev + self.manual_received - self.output_qty - self.waste_qty
+
+
+def recompute_ledger(target_date: date, section: Section, item: Item) -> None:
+    ledger, _ = DailyLedger.objects.get_or_create(
+        date=target_date, section=section, item=item
+    )
+    total_output = ProductionEntry.objects.filter(
+        section=section, item=item, entry_date=target_date
+    ).aggregate(total=models.Sum("actual_qty"))["total"] or Decimal("0.00")
+
+    ledger.output_qty = total_output
+    ledger.save(update_fields=["output_qty"])
+
+    edges = ProcessFlowEdge.objects.filter(from_section=section, item=item)
+    for edge in edges:
+        from datetime import timedelta
+        downstream_date = target_date + timedelta(days=edge.lead_days)
+
+        inbound_edges = ProcessFlowEdge.objects.filter(to_section=edge.to_section, item=item)
+        total_received = Decimal("0.00")
+        for in_edge in inbound_edges:
+            upstream_date = downstream_date - timedelta(days=in_edge.lead_days)
+            up_ledger = DailyLedger.objects.filter(date=upstream_date, section=in_edge.from_section, item=item).first()
+            if up_ledger:
+                total_received += up_ledger.output_qty
+
+        downstream_ledger, _ = DailyLedger.objects.get_or_create(
+            date=downstream_date, section=edge.to_section, item=item
+        )
+        downstream_ledger.received_from_prev = total_received
+        downstream_ledger.save(update_fields=["received_from_prev"])

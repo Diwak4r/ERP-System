@@ -6,6 +6,7 @@ from typing import Optional
 from django import forms
 
 from .models import Item, ProductionEntry, Section, TargetRule, Worker
+from .models import DailyLedger, DayLock
 
 
 from django.core.exceptions import ValidationError
@@ -136,4 +137,47 @@ class ProductionEntryForm(forms.ModelForm):
 
 ProductionEntryFormSet = forms.formset_factory(
     ProductionEntryForm, formset=BaseProductionEntryFormSet, extra=0, min_num=1, validate_min=True
+)
+
+class WasteEntryForm(forms.ModelForm):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        if self.instance and self.instance.pk:
+            self.fields["item_name"] = forms.CharField(
+                initial=str(self.instance.item),
+                required=False,
+                disabled=True,
+                label="Item",
+            )
+    class Meta:
+        model = DailyLedger
+        fields = ["waste_qty"]
+        widgets = {
+            "waste_qty": forms.NumberInput(attrs={"step": "0.01"}),
+        }
+
+    def clean(self):
+        cleaned = super().clean()
+        if self.instance and self.instance.pk:
+            # Check DayLock
+            lock = DayLock.objects.filter(
+                section=self.instance.section,
+                lock_date=self.instance.date,
+                is_locked=True
+            ).first()
+            if lock:
+                raise ValidationError(f"Section {self.instance.section.name} is locked for {self.instance.date}.")
+
+            # Anti-Excel Immutability Rule for Waste?
+            # Wait, the rule is "no backdated edits" generally. If the date < today, it shouldn't be edited.
+            if self.instance.date < date.today():
+                raise ValidationError("Cannot create or edit backdated waste entries.")
+
+            if cleaned.get("waste_qty") and cleaned["waste_qty"] < 0:
+                self.add_error("waste_qty", "Waste quantity cannot be negative.")
+
+        return cleaned
+
+WasteEntryFormSet = forms.modelformset_factory(
+    DailyLedger, form=WasteEntryForm, extra=0, can_delete=False
 )
