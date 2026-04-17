@@ -170,18 +170,54 @@ class ProductionEntry(models.Model):
 
     def save(self, *args, **kwargs):
         super().save(*args, **kwargs)
-        # Update Ledger post save
         if self.section and self.item and self.entry_date:
-            ledger, _ = DailyLedger.objects.get_or_create(
-                date=self.entry_date, section=self.section, item=self.item
-            )
-            # Recompute total output
-            total_output = ProductionEntry.objects.filter(
-                section=self.section, item=self.item, entry_date=self.entry_date
-            ).aggregate(total=models.Sum("actual_qty"))["total"] or Decimal("0.00")
+            recompute_ledger(self.entry_date, self.section, self.item)
 
-            ledger.output_qty = total_output
-            ledger.save(update_fields=["output_qty"])
+    def delete(self, *args, **kwargs):
+        section, item, entry_date = self.section, self.item, self.entry_date
+        super().delete(*args, **kwargs)
+        if section and item and entry_date:
+            recompute_ledger(entry_date, section, item)
+
+
+def recompute_ledger(target_date: date, section: Section, item: Item):
+    from datetime import timedelta
+    ledger, _ = DailyLedger.objects.get_or_create(
+        date=target_date, section=section, item=item
+    )
+    # Recompute total output for the section/item/date
+    total_output = ProductionEntry.objects.filter(
+        section=section, item=item, entry_date=target_date
+    ).aggregate(total=models.Sum("actual_qty"))["total"] or Decimal("0.00")
+
+    ledger.output_qty = total_output
+    ledger.save(update_fields=["output_qty"])
+
+    # Cascade to downstream ledgers based on ProcessFlowEdge
+    outbound_edges = ProcessFlowEdge.objects.filter(item=item, from_section=section)
+    for edge in outbound_edges:
+        downstream_date = target_date + timedelta(days=edge.lead_days)
+        downstream_ledger, _ = DailyLedger.objects.get_or_create(
+            date=downstream_date, section=edge.to_section, item=item
+        )
+
+        # Recalculate received_from_prev for the downstream section.
+        # It should be the sum of output_qty from all inbound edges for this date
+
+        # Find all upstream sections sending this item to the downstream section
+        inbound_edges_to_downstream = ProcessFlowEdge.objects.filter(item=item, to_section=edge.to_section)
+
+        total_received = Decimal("0.00")
+        for inbound in inbound_edges_to_downstream:
+            upstream_date = downstream_date - timedelta(days=inbound.lead_days)
+            upstream_ledger = DailyLedger.objects.filter(
+                date=upstream_date, section=inbound.from_section, item=item
+            ).first()
+            if upstream_ledger:
+                total_received += upstream_ledger.output_qty
+
+        downstream_ledger.received_from_prev = total_received
+        downstream_ledger.save(update_fields=["received_from_prev"])
 
 class DayLock(models.Model):
     section = models.ForeignKey(Section, on_delete=models.CASCADE)

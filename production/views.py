@@ -11,8 +11,8 @@ from django.template.loader import render_to_string
 from django.db.models import Sum, F, ExpressionWrapper, FloatField, Case, When, Value, BooleanField
 from django.db.models.functions import Cast
 
-from .forms import ProductionEntryForm, ProductionEntryFormSet
-from .models import Item, ProductionEntry, Section, TargetRule, Worker
+from .forms import ProductionEntryForm, ProductionEntryFormSet, WasteEntryForm
+from .models import Item, ProductionEntry, Section, TargetRule, Worker, DailyLedger
 
 ROLE_ADMIN = "ADMIN"
 ROLE_SUPERVISOR = "SUPERVISOR"
@@ -243,3 +243,105 @@ def worker_history(request: HttpRequest, worker_id: int) -> HttpResponse:
         "entries": entries,
     }
     return render(request, "production/reports/worker_history_modal.html", context)
+
+@login_required
+def ledger_list(request: HttpRequest) -> HttpResponse:
+    sections = _available_sections(request.user)
+    date_str = request.GET.get("date")
+    section_id = request.GET.get("section")
+
+    try:
+        ledger_date = date.fromisoformat(date_str) if date_str else date.today()
+    except ValueError:
+        ledger_date = date.today()
+
+    selected_section = Section.objects.filter(id=section_id).first() if section_id else None
+
+    if selected_section and not _ensure_permission(request.user, selected_section):
+        return HttpResponseForbidden("Not allowed")
+
+    ledgers = DailyLedger.objects.filter(date=ledger_date)
+    if selected_section:
+        ledgers = ledgers.filter(section=selected_section)
+    elif sections:
+         ledgers = ledgers.filter(section__in=sections)
+
+    ledgers = ledgers.select_related("section", "item").order_by("section__name", "item__name")
+
+    # Add anomaly flag for template
+    for ledger in ledgers:
+        available = ledger.opening_balance + ledger.received_from_prev + ledger.manual_received
+        ledger.is_anomaly = ledger.output_qty > available
+
+    context = {
+        "ledgers": ledgers,
+        "ledger_date": ledger_date,
+        "sections": sections,
+        "selected_section": selected_section,
+    }
+    return render(request, "production/ledger_list.html", context)
+
+
+
+@login_required
+def waste_entry(request: HttpRequest) -> HttpResponse:
+    if request.method == "POST":
+        form = WasteEntryForm(request.POST, user=request.user)
+        if form.is_valid():
+            # Get or create ledger and update waste
+            ledger, created = DailyLedger.objects.get_or_create(
+                date=form.cleaned_data["date"],
+                section=form.cleaned_data["section"],
+                item=form.cleaned_data["item"],
+            )
+            # Try to save to invoke form validation logic again or just update
+            ledger.waste_qty = form.cleaned_data["waste_qty"]
+            ledger.save(update_fields=["waste_qty"])
+            messages.success(request, f"Wastage updated for {ledger.item.name} in {ledger.section.name}")
+            return redirect("production:waste-entry")
+    else:
+        form = WasteEntryForm(user=request.user, initial={"date": date.today()})
+
+    context = {
+        "form": form,
+    }
+    return render(request, "production/waste_entry.html", context)
+
+@login_required
+def wastage_report(request: HttpRequest) -> HttpResponse:
+    sections = _available_sections(request.user)
+    date_str = request.GET.get("date")
+    section_id = request.GET.get("section")
+
+    try:
+        report_date = date.fromisoformat(date_str) if date_str else date.today()
+    except ValueError:
+        report_date = date.today()
+
+    selected_section = Section.objects.filter(id=section_id).first() if section_id else None
+
+    if selected_section and not _ensure_permission(request.user, selected_section):
+        return HttpResponseForbidden("Not allowed")
+
+    ledgers = DailyLedger.objects.filter(date=report_date)
+    if selected_section:
+        ledgers = ledgers.filter(section=selected_section)
+    elif sections:
+         ledgers = ledgers.filter(section__in=sections)
+
+    ledgers = ledgers.select_related("section", "item").order_by("section__name", "item__name")
+
+    for ledger in ledgers:
+        total_available = ledger.opening_balance + ledger.received_from_prev + ledger.manual_received
+        if total_available > 0:
+            ledger.waste_percent = (ledger.waste_qty / total_available) * 100
+        else:
+            ledger.waste_percent = Decimal("0.00")
+
+    context = {
+        "ledgers": ledgers,
+        "report_date": report_date,
+        "sections": sections,
+        "selected_section": selected_section,
+    }
+    return render(request, "production/reports/wastage_report.html", context)

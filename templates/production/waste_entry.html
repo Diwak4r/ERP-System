@@ -1,0 +1,24 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Waste Entry</title>
+</head>
+<body>
+    <h1>Log Wastage</h1>
+    {% if messages %}
+    <ul class="messages">
+        {% for message in messages %}
+        <li{% if message.tags %} class="{{ message.tags }}"{% endif %}>{{ message }}</li>
+        {% endfor %}
+    </ul>
+    {% endif %}
+
+    <form method="post">
+        {% csrf_token %}
+        {{ form.as_p }}
+        <button type="submit">Save Wastage</button>
+    </form>
+
+    <a href="{% url 'production:ledger-list' %}">View Ledger</a>
+</body>
+</html>

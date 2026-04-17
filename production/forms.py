@@ -5,7 +5,7 @@ from typing import Optional
 
 from django import forms
 
-from .models import Item, ProductionEntry, Section, TargetRule, Worker
+from .models import Item, ProductionEntry, Section, TargetRule, Worker, DayLock, DailyLedger
 
 
 from django.core.exceptions import ValidationError
@@ -137,3 +137,42 @@ class ProductionEntryForm(forms.ModelForm):
 ProductionEntryFormSet = forms.formset_factory(
     ProductionEntryForm, formset=BaseProductionEntryFormSet, extra=0, min_num=1, validate_min=True
 )
+
+
+
+class WasteEntryForm(forms.ModelForm):
+    class Meta:
+        model = DailyLedger
+        fields = ["date", "section", "item", "waste_qty"]
+        widgets = {
+            "date": forms.DateInput(attrs={"type": "date"}),
+            "waste_qty": forms.NumberInput(attrs={"step": "0.01", "min": "0"})
+        }
+
+    def __init__(self, *args, **kwargs):
+        self.user = kwargs.pop("user", None)
+        super().__init__(*args, **kwargs)
+        self.fields["section"].queryset = Section.objects.filter(is_active=True)
+        self.fields["item"].queryset = Item.objects.filter(is_active=True)
+
+        # Enforce RBAC in form choices if user provided
+        if self.user and not self.user.is_superuser and not self.user.groups.filter(name="ADMIN").exists():
+             self.fields["section"].queryset = Section.objects.filter(is_active=True, supervisors=self.user)
+
+
+    def clean(self):
+        cleaned = super().clean()
+        date_val = cleaned.get("date")
+        section_val = cleaned.get("section")
+
+        # Enforce no backdated edits rule (Anti-Excel)
+        if date_val and date_val < date.today():
+             raise ValidationError("Cannot create or edit backdated waste entries.")
+
+        # Enforce DayLock
+        if section_val and date_val:
+            lock = DayLock.objects.filter(section=section_val, lock_date=date_val, is_locked=True).first()
+            if lock:
+                raise ValidationError(f"Section {section_val.name} is locked for {date_val}. Cannot edit waste.")
+
+        return cleaned

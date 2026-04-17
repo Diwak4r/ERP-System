@@ -205,3 +205,91 @@ def test_audit_event_created_on_admin_edit(admin_user, section, worker, item):
     pe_admin.save_model(request, entry, None, change=True)
 
     assert AuditEvent.objects.filter(model_name="ProductionEntry", action="UPDATE").count() == 1
+
+@pytest.mark.django_db
+def test_recompute_ledger_and_cascade(admin_user, worker, item):
+    today = date.today()
+    tomorrow = today + timedelta(days=1)
+
+    sec1 = Section.objects.create(name="Sec1", code="S1")
+    sec2 = Section.objects.create(name="Sec2", code="S2")
+
+    # Lead days = 1, so output today in sec1 is received tomorrow in sec2
+    ProcessFlowEdge.objects.create(item=item, from_section=sec1, to_section=sec2, lead_days=1)
+
+    # Create entry in sec1
+    pe = ProductionEntry.objects.create(
+        entry_date=today, section=sec1, worker=worker, item=item,
+        target_qty=10, actual_qty=20, shift_hours=8, created_by=admin_user
+    )
+
+    # Check sec1 ledger output_qty
+    ledger1 = DailyLedger.objects.get(date=today, section=sec1, item=item)
+    assert ledger1.output_qty == Decimal("20.00")
+
+    # Check sec2 ledger received_from_prev (tomorrow)
+    ledger2 = DailyLedger.objects.get(date=tomorrow, section=sec2, item=item)
+    assert ledger2.received_from_prev == Decimal("20.00")
+
+    # Now delete entry and verify cascade down
+    pe.delete()
+    ledger1.refresh_from_db()
+    ledger2.refresh_from_db()
+    assert ledger1.output_qty == Decimal("0.00")
+    assert ledger2.received_from_prev == Decimal("0.00")
+
+
+@pytest.mark.django_db
+def test_ledger_list_view(admin_user, section, item, client):
+    DailyLedger.objects.create(
+        date=date.today(), section=section, item=item,
+        opening_balance=10, output_qty=20  # Anomaly! Output > available
+    )
+    client.force_login(admin_user)
+    response = client.get(reverse("production:ledger-list"))
+    assert response.status_code == 200
+    assert b"anomaly" in response.content
+
+@pytest.mark.django_db
+def test_waste_entry_view_and_daylock(admin_user, section, item, client):
+    today = date.today()
+    client.force_login(admin_user)
+
+    # Valid submission
+    response = client.post(reverse("production:waste-entry"), {
+        "date": today.isoformat(),
+        "section": section.id,
+        "item": item.id,
+        "waste_qty": "5.5"
+    })
+
+    ledger = DailyLedger.objects.get(date=today, section=section, item=item)
+    assert ledger.waste_qty == Decimal("5.50")
+
+    # Test DayLock enforcement
+    DayLock.objects.create(section=section, lock_date=today, is_locked=True)
+
+    response = client.post(reverse("production:waste-entry"), {
+        "date": today.isoformat(),
+        "section": section.id,
+        "item": item.id,
+        "waste_qty": "10.0"
+    })
+
+    # Form should fail validation, waste_qty should still be 5.5
+    assert b"is locked" in response.content
+    ledger.refresh_from_db()
+    assert ledger.waste_qty == Decimal("5.50")
+
+
+@pytest.mark.django_db
+def test_wastage_report_view(admin_user, section, item, client):
+    DailyLedger.objects.create(
+        date=date.today(), section=section, item=item,
+        opening_balance=100, waste_qty=20
+    )
+    client.force_login(admin_user)
+    response = client.get(reverse("production:report-wastage"))
+    assert response.status_code == 200
+    # 20 / 100 = 20%
+    assert b"20.00%" in response.content
