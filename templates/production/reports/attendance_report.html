@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Attendance Headcount Report</title>
+    <script src="https://unpkg.com/htmx.org@1.9.10"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-100">
+<div class="container mx-auto mt-8 p-4">
+    <h1 class="text-2xl font-bold mb-6">Attendance Headcount Report</h1>
+
+    <form method="get" class="mb-6 flex gap-4" hx-get="{% url 'production:report-attendance' %}" hx-target="body" hx-push-url="true">
+        <div>
+            <label class="block text-sm font-medium text-gray-700">Start Date</label>
+            <input type="date" name="start_date" value="{{ start_date|date:'Y-m-d' }}" class="mt-1 block w-full border-gray-300 rounded-md" onchange="this.form.submit()">
+        </div>
+        <div>
+            <label class="block text-sm font-medium text-gray-700">End Date</label>
+            <input type="date" name="end_date" value="{{ end_date|date:'Y-m-d' }}" class="mt-1 block w-full border-gray-300 rounded-md" onchange="this.form.submit()">
+        </div>
+        <div>
+            <label class="block text-sm font-medium text-gray-700">Section (Optional)</label>
+            <select name="section" class="mt-1 block w-full border-gray-300 rounded-md" onchange="this.form.submit()">
+                <option value="">All Sections</option>
+                {% for section in sections %}
+                    <option value="{{ section.id }}" {% if selected_section and selected_section.id == section.id %}selected{% endif %}>
+                        {{ section.name }}
+                    </option>
+                {% endfor %}
+            </select>
+        </div>
+    </form>
+
+    <div class="bg-white rounded shadow overflow-x-auto">
+        <table class="min-w-full">
+            <thead class="bg-gray-100 border-b">
+                <tr>
+                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Date</th>
+                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Section</th>
+                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Present Workers Count</th>
+                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Submitted By</th>
+                </tr>
+            </thead>
+            <tbody class="divide-y divide-gray-200">
+                {% for sheet in sheets %}
+                    <tr class="hover:bg-gray-50">
+                        <td class="px-6 py-4 whitespace-nowrap">{{ sheet.attendance_date }}</td>
+                        <td class="px-6 py-4 whitespace-nowrap">{{ sheet.section.name }}</td>
+                        <td class="px-6 py-4 whitespace-nowrap">{{ sheet.present_count|floatformat:0 }}</td>
+                        <td class="px-6 py-4 whitespace-nowrap">{{ sheet.created_by.username }}</td>
+                    </tr>
+                {% empty %}
+                    <tr>
+                        <td colspan="4" class="px-6 py-4 text-center text-gray-500">No attendance data found for this period.</td>
+                    </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+</body>
+</html>

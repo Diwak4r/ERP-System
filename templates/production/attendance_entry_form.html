@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Attendance Entry</title>
+    <script src="https://unpkg.com/htmx.org@1.9.10"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-100">
+<div class="container mx-auto mt-8 p-4">
+    <h1 class="text-2xl font-bold mb-6">Attendance Entry</h1>
+
+    {% if messages %}
+        <div class="mb-4">
+            {% for message in messages %}
+                <div class="p-3 rounded text-white {% if message.tags == 'error' %}bg-red-500{% else %}bg-green-500{% endif %}">
+                    {{ message }}
+                </div>
+            {% endfor %}
+        </div>
+    {% endif %}
+
+    <form method="get" class="mb-6 flex gap-4" hx-get="{% url 'production:attendance-entry' %}" hx-target="body" hx-push-url="true">
+        <div>
+            <label class="block text-sm font-medium text-gray-700">Date</label>
+            <input type="date" name="date" value="{{ selected_date|date:'Y-m-d' }}" class="mt-1 block w-full border-gray-300 rounded-md" onchange="this.form.submit()">
+        </div>
+        <div>
+            <label class="block text-sm font-medium text-gray-700">Section</label>
+            <select name="section" class="mt-1 block w-full border-gray-300 rounded-md" onchange="this.form.submit()">
+                {% for section in sections %}
+                    <option value="{{ section.id }}" {% if selected_section.id == section.id %}selected{% endif %}>
+                        {{ section.name }}
+                    </option>
+                {% endfor %}
+            </select>
+        </div>
+    </form>
+
+    <form method="post" action="{% url 'production:attendance-entry' %}?date={{ selected_date|date:'Y-m-d' }}&section={{ selected_section.id }}">
+        {% csrf_token %}
+        <div class="bg-white p-6 rounded shadow">
+            <h2 class="text-xl font-semibold mb-4">Select Present Workers</h2>
+            <div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
+                {% for worker in form.workers %}
+                    <div class="flex items-center space-x-2 p-2 border rounded hover:bg-gray-50">
+                        {{ worker.tag }}
+                        <label for="{{ worker.id_for_label }}" class="cursor-pointer select-none">
+                            {{ worker.choice_label }}
+                        </label>
+                    </div>
+                {% endfor %}
+            </div>
+
+            {% if form.errors %}
+                <div class="text-red-500 text-sm mt-4">
+                    {{ form.non_field_errors }}
+                </div>
+            {% endif %}
+
+            <div class="mt-6 flex justify-end">
+                <button type="submit" class="bg-blue-600 text-white px-4 py-2 rounded shadow hover:bg-blue-700">
+                    Save Attendance
+                </button>
+            </div>
+        </div>
+    </form>
+</div>
+</body>
+</html>

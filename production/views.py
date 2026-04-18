@@ -11,8 +11,8 @@ from django.template.loader import render_to_string
 from django.db.models import Sum, F, ExpressionWrapper, FloatField, Case, When, Value, BooleanField
 from django.db.models.functions import Cast
 
-from .forms import ProductionEntryForm, ProductionEntryFormSet, WasteEntryForm, WasteEntryFormSet
-from .models import DailyLedger, Item, ProductionEntry, Section, TargetRule, WasteEntry, Worker
+from .forms import ProductionEntryForm, ProductionEntryFormSet, WasteEntryForm, WasteEntryFormSet, AttendanceForm
+from .models import DailyLedger, Item, ProductionEntry, Section, TargetRule, WasteEntry, Worker, AttendanceSheet, AttendanceLine
 
 ROLE_ADMIN = "ADMIN"
 ROLE_SUPERVISOR = "SUPERVISOR"
@@ -354,3 +354,101 @@ def wastage_report(request: HttpRequest) -> HttpResponse:
         "end_date": end_date_val,
     }
     return render(request, "production/reports/wastage_report.html", context)
+
+
+@login_required
+def attendance_entry(request: HttpRequest) -> HttpResponse:
+    sections = _available_sections(request.user)
+    if not sections:
+        return HttpResponseForbidden("You do not have access to any sections.")
+
+    selected_date_str = request.GET.get("date", str(date.today()))
+    selected_date = _coerce_date(selected_date_str, date.today())
+    section_id_str = request.GET.get("section")
+
+    selected_section = None
+    if section_id_str and section_id_str.isdigit():
+        selected_section = next((s for s in sections if s.id == int(section_id_str)), None)
+    if not selected_section and sections:
+        selected_section = sections[0]
+
+    if not selected_section:
+        return HttpResponseForbidden("Invalid section.")
+
+    # Attempt to load existing sheet
+    sheet = AttendanceSheet.objects.filter(attendance_date=selected_date, section=selected_section).first()
+
+    if request.method == "POST":
+        form = AttendanceForm(request.POST)
+        if form.is_valid():
+            try:
+                # Validation rules are in model clean
+                sheet_to_save = sheet or AttendanceSheet(
+                    attendance_date=selected_date,
+                    section=selected_section,
+                    created_by=request.user
+                )
+                sheet_to_save.clean() # Check DayLock and Backdate
+                sheet_to_save.save()
+
+                # Delete existing lines
+                sheet_to_save.lines.all().delete()
+
+                # Create new lines
+                workers = form.cleaned_data["workers"]
+                lines = [AttendanceLine(sheet=sheet_to_save, worker=w) for w in workers]
+                AttendanceLine.objects.bulk_create(lines)
+
+                messages.success(request, f"Attendance for {selected_section.name} on {selected_date} saved successfully.")
+                return redirect(f"{request.path}?date={selected_date}&section={selected_section.id}")
+            except Exception as e:
+                messages.error(request, str(e))
+    else:
+        initial = {
+            "attendance_date": selected_date,
+            "section": selected_section,
+        }
+        if sheet:
+            initial["workers"] = [line.worker_id for line in sheet.lines.all()]
+        form = AttendanceForm(initial=initial)
+
+    context = {
+        "form": form,
+        "sections": sections,
+        "selected_date": selected_date,
+        "selected_section": selected_section,
+    }
+    return render(request, "production/attendance_entry_form.html", context)
+
+
+@login_required
+def attendance_report(request: HttpRequest) -> HttpResponse:
+    start_date_str = request.GET.get("start_date", str(date.today()))
+    start_date_val = _coerce_date(start_date_str, date.today())
+
+    end_date_str = request.GET.get("end_date", str(date.today()))
+    end_date_val = _coerce_date(end_date_str, date.today())
+
+    sections = _available_sections(request.user)
+    section_id_str = request.GET.get("section")
+    selected_section = None
+    if section_id_str and section_id_str.isdigit():
+        selected_section = next((s for s in sections if s.id == int(section_id_str)), None)
+
+    sheets = AttendanceSheet.objects.filter(
+        attendance_date__range=[start_date_val, end_date_val]
+    )
+    if selected_section:
+        sheets = sheets.filter(section=selected_section)
+
+    # Annotate headcount
+    sheets = sheets.annotate(present_count=Sum(Case(When(lines__isnull=False, then=Value(1)), default=Value(0), output_field=FloatField()))).order_by("-attendance_date", "section__name")
+
+    context = {
+        "sheets": sheets,
+        "sections": sections,
+        "selected_section": selected_section,
+        "start_date": start_date_val,
+        "end_date": end_date_val,
+    }
+    return render(request, "production/reports/attendance_report.html", context)

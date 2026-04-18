@@ -295,6 +295,41 @@ class ProcessFlowEdge(models.Model):
     def __str__(self) -> str:
         return f"{self.item}: {self.from_section} -> {self.to_section} ({self.lead_days} days)"
 
+class AttendanceSheet(models.Model):
+    attendance_date = models.DateField()
+    section = models.ForeignKey(Section, on_delete=models.PROTECT)
+    created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name="attendance_sheets")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        unique_together = ("attendance_date", "section")
+        ordering = ["-attendance_date", "section__name"]
+
+    def __str__(self) -> str:
+        return f"{self.attendance_date} - {self.section}"
+
+    def clean(self) -> None:
+        if self.pk is None and self.attendance_date and self.attendance_date < date.today():
+            raise ValidationError("Cannot create backdated attendance sheets.")
+
+        if getattr(self, "section", None) and getattr(self, "attendance_date", None):
+            lock = DayLock.objects.filter(section=self.section, lock_date=self.attendance_date, is_locked=True).first()
+            if lock:
+                raise ValidationError(f"Section {self.section.name} is locked for {self.attendance_date}.")
+
+class AttendanceLine(models.Model):
+    sheet = models.ForeignKey(AttendanceSheet, on_delete=models.CASCADE, related_name="lines")
+    worker = models.ForeignKey(Worker, on_delete=models.PROTECT)
+
+    class Meta:
+        unique_together = ("sheet", "worker")
+        ordering = ["worker__name"]
+
+    def __str__(self) -> str:
+        return f"{self.sheet} - {self.worker}"
+
+
 class DailyLedger(models.Model):
     date = models.DateField()
     section = models.ForeignKey(Section, on_delete=models.CASCADE)

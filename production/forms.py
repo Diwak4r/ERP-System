@@ -10,6 +10,15 @@ from .models import Item, ProductionEntry, Section, TargetRule, WasteEntry, Work
 
 from django.core.exceptions import ValidationError
 
+class AttendanceForm(forms.Form):
+    attendance_date = forms.DateField(widget=forms.DateInput(attrs={"type": "date"}))
+    section = forms.ModelChoiceField(queryset=Section.objects.filter(is_active=True))
+    workers = forms.ModelMultipleChoiceField(
+        queryset=Worker.objects.filter(is_active=True),
+        widget=forms.CheckboxSelectMultiple,
+        required=False,
+    )
+
 class BaseProductionEntryFormSet(forms.BaseFormSet):
     def __init__(self, *args, **kwargs):
         self.form_kwargs = kwargs.get("form_kwargs", {})

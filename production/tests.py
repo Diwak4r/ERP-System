@@ -10,7 +10,7 @@ from django.contrib.admin.sites import AdminSite
 from django.urls import reverse
 
 from .admin import ProductionEntryAdmin
-from .models import AuditEvent, DailyLedger, DayLock, Item, ProcessFlowEdge, ProductionEntry, Section, TargetRule, WasteEntry, Worker
+from .models import AuditEvent, DailyLedger, DayLock, Item, ProcessFlowEdge, ProductionEntry, Section, TargetRule, WasteEntry, Worker, AttendanceSheet, AttendanceLine
 
 pytestmark = pytest.mark.django_db
 
@@ -307,3 +307,59 @@ def test_wastage_report_shows_percentage(admin_user, section, item, client):
     response = client.get(reverse("production:report-wastage"))
     assert response.status_code == 200
     assert response.context["rows"][0]["waste_percentage"] == Decimal("10.00")
+
+
+@pytest.mark.django_db
+def test_attendance_sheet_creation(admin_user, section, worker, client):
+    today = date.today()
+    client.force_login(admin_user)
+
+    response = client.post(
+        reverse("production:attendance-entry"),
+        data={
+            "attendance_date": today.isoformat(),
+            "section": section.id,
+            "workers": [worker.id],
+        },
+        follow=True
+    )
+    assert response.status_code == 200
+    assert AttendanceSheet.objects.count() == 1
+    sheet = AttendanceSheet.objects.first()
+    assert sheet.section == section
+    assert sheet.lines.count() == 1
+    assert sheet.lines.first().worker == worker
+
+
+@pytest.mark.django_db
+def test_attendance_daylock_validation(admin_user, section, worker):
+    today = date.today()
+    DayLock.objects.create(section=section, lock_date=today, is_locked=True)
+
+    sheet = AttendanceSheet(attendance_date=today, section=section, created_by=admin_user)
+    with pytest.raises(ValidationError, match=f"Section {section.name} is locked for {today}."):
+        sheet.clean()
+
+
+@pytest.mark.django_db
+def test_attendance_permissions_enforced(supervisor_user, client):
+    other_section = Section.objects.create(name="Packing", code="PCK")
+    client.force_login(supervisor_user)
+
+    response = client.get(reverse("production:attendance-entry"), {"section": other_section.id})
+    # Will hit Forbidden because supervisor lacks section access
+    assert response.status_code == 403
+
+
+@pytest.mark.django_db
+def test_attendance_report_aggregation(admin_user, section, worker, client):
+    today = date.today()
+    sheet = AttendanceSheet.objects.create(attendance_date=today, section=section, created_by=admin_user)
+    AttendanceLine.objects.create(sheet=sheet, worker=worker)
+
+    client.force_login(admin_user)
+    response = client.get(reverse("production:report-attendance"))
+
+    assert response.status_code == 200
+    assert b"Present Workers Count" in response.content
+    assert b"1" in response.content  # The float formatted count

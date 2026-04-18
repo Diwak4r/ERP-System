@@ -14,6 +14,8 @@ from .models import (
     TargetRule,
     WasteEntry,
     Worker,
+    AttendanceSheet,
+    AttendanceLine,
 )
 from .middleware import get_current_request_ip
 
@@ -166,3 +168,14 @@ class WasteEntryAdmin(admin.ModelAdmin):
     list_filter = ("waste_date", "section", "item")
     search_fields = ("item__name", "item__sku", "section__name", "reason")
     readonly_fields = ("created_at", "updated_at", "created_by")
+
+class AttendanceLineInline(admin.TabularInline):
+    model = AttendanceLine
+    extra = 0
+
+@admin.register(AttendanceSheet)
+class AttendanceSheetAdmin(admin.ModelAdmin):
+    list_display = ("attendance_date", "section", "created_by", "created_at")
+    list_filter = ("attendance_date", "section")
+    search_fields = ("section__name", "created_by__username")
+    inlines = [AttendanceLineInline]
