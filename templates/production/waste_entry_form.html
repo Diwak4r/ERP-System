@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Waste Entry</title>
+    <script src="https://unpkg.com/htmx.org@1.9.12"></script>
+    <style>
+        table { width: 100%; border-collapse: collapse; }
+        th, td { padding: 8px; border: 1px solid #ddd; }
+    </style>
+</head>
+<body>
+    <h1>Waste Entry</h1>
+    <form method="post" hx-boost="false">
+        {% csrf_token %}
+        <label>Date: <input type="date" name="waste_date" value="{{ waste_date|date:'Y-m-d' }}"></label>
+        <label>Section:
+            <select name="section">
+                {% for section in sections %}
+                    <option value="{{ section.id }}" {% if section.id == selected_section.id %}selected{% endif %}>{{ section.name }}</option>
+                {% endfor %}
+            </select>
+        </label>
+        <table>
+            <thead>
+                <tr>
+                    <th>Item</th>
+                    <th>Waste Qty</th>
+                    <th>Reason</th>
+                </tr>
+            </thead>
+            <tbody id="waste-rows">
+                {{ formset.management_form }}
+                {% for form in formset.forms %}
+                    {% include "production/waste_entry_row.html" with form=form index=forloop.counter0 next_index=formset.total_form_count %}
+                {% endfor %}
+            </tbody>
+        </table>
+        <button
+            type="button"
+            hx-get="{% url 'production:waste-entry-row' %}?form_count={{ formset.total_form_count }}&section={{ selected_section.id }}&waste_date={{ waste_date|date:'Y-m-d' }}"
+            hx-target="#waste-rows"
+            hx-swap="beforeend"
+        >
+            Add Row
+        </button>
+        <button type="submit">Save</button>
+    </form>
+</body>
+</html>

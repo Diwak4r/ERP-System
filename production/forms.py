@@ -5,7 +5,7 @@ from typing import Optional
 
 from django import forms
 
-from .models import Item, ProductionEntry, Section, TargetRule, Worker
+from .models import Item, ProductionEntry, Section, TargetRule, WasteEntry, Worker
 
 
 from django.core.exceptions import ValidationError
@@ -136,4 +136,71 @@ class ProductionEntryForm(forms.ModelForm):
 
 ProductionEntryFormSet = forms.formset_factory(
     ProductionEntryForm, formset=BaseProductionEntryFormSet, extra=0, min_num=1, validate_min=True
+)
+
+
+class BaseWasteEntryFormSet(forms.BaseFormSet):
+    def __init__(self, *args, **kwargs):
+        self.form_kwargs = kwargs.get("form_kwargs", {})
+        self.section = self.form_kwargs.get("section")
+        self.waste_date = self.form_kwargs.get("waste_date")
+        self.item_qs = Item.objects.filter(is_active=True)
+        self.item_choices = [(i.pk, str(i)) for i in self.item_qs]
+        super().__init__(*args, **kwargs)
+
+    def get_form_kwargs(self, index):
+        kwargs = super().get_form_kwargs(index)
+        kwargs.update({
+            "item_choices": self.item_choices,
+        })
+        return kwargs
+
+
+class WasteEntryForm(forms.ModelForm):
+    def __init__(
+        self,
+        *args,
+        section: Optional[Section] = None,
+        waste_date: Optional[date] = None,
+        item_choices: Optional[list] = None,
+        **kwargs,
+    ):
+        super().__init__(*args, **kwargs)
+        self.section = section
+        self.waste_date = waste_date
+        self.fields["item"].queryset = Item.objects.filter(is_active=True)
+        if item_choices is not None:
+            self.fields["item"].choices = item_choices
+
+    class Meta:
+        model = WasteEntry
+        fields = ["item", "waste_qty", "reason"]
+        widgets = {
+            "waste_qty": forms.NumberInput(attrs={"step": "0.01"}),
+            "reason": forms.TextInput(),
+        }
+
+    def clean(self):
+        cleaned = super().clean()
+        if not self.errors and self.cleaned_data.get("item") and self.cleaned_data.get("waste_qty") is not None:
+            entry = WasteEntry(
+                waste_date=self.waste_date,
+                section=self.section,
+                item=self.cleaned_data.get("item"),
+                waste_qty=self.cleaned_data.get("waste_qty") or 0,
+                reason=self.cleaned_data.get("reason") or "",
+            )
+            try:
+                entry.clean()
+            except ValidationError as e:
+                if hasattr(e, "messages"):
+                    for msg in e.messages:
+                        self.add_error(None, msg)
+                else:
+                    self.add_error(None, str(e))
+        return cleaned
+
+
+WasteEntryFormSet = forms.formset_factory(
+    WasteEntryForm, formset=BaseWasteEntryFormSet, extra=0, min_num=1, validate_min=True
 )

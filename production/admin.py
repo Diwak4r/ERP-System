@@ -3,7 +3,18 @@ from decimal import Decimal
 from django.contrib import admin
 from django.core.serializers.json import DjangoJSONEncoder
 
-from .models import Item, ProductionEntry, Section, TargetRule, Worker, DayLock, AuditEvent, ProcessFlowEdge, DailyLedger
+from .models import (
+    AuditEvent,
+    DailyLedger,
+    DayLock,
+    Item,
+    ProcessFlowEdge,
+    ProductionEntry,
+    Section,
+    TargetRule,
+    WasteEntry,
+    Worker,
+)
 from .middleware import get_current_request_ip
 
 def _serialize_model(obj):
@@ -147,3 +158,11 @@ class DailyLedgerAdmin(admin.ModelAdmin):
     list_display = ("date", "section", "item", "opening_balance", "received_from_prev", "manual_received", "output_qty", "waste_qty", "closing_balance")
     list_filter = ("date", "section", "item")
     readonly_fields = ("closing_balance",)
+
+
+@admin.register(WasteEntry)
+class WasteEntryAdmin(admin.ModelAdmin):
+    list_display = ("waste_date", "section", "item", "waste_qty", "reason", "created_by", "created_at")
+    list_filter = ("waste_date", "section", "item")
+    search_fields = ("item__name", "item__sku", "section__name", "reason")
+    readonly_fields = ("created_at", "updated_at", "created_by")
