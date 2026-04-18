@@ -11,8 +11,8 @@ from django.template.loader import render_to_string
 from django.db.models import Sum, F, ExpressionWrapper, FloatField, Case, When, Value, BooleanField
 from django.db.models.functions import Cast
 
-from .forms import ProductionEntryForm, ProductionEntryFormSet
-from .models import Item, ProductionEntry, Section, TargetRule, Worker
+from .forms import ProductionEntryForm, ProductionEntryFormSet, WasteEntryForm, WasteEntryFormSet
+from .models import DailyLedger, Item, ProductionEntry, Section, TargetRule, WasteEntry, Worker
 
 ROLE_ADMIN = "ADMIN"
 ROLE_SUPERVISOR = "SUPERVISOR"
@@ -36,6 +36,13 @@ def _ensure_permission(user, section: Section) -> bool:
 
 def _target_for(section: Section, item: Item, entry_date: date):
     return TargetRule.objects.for_section_item_date(section=section, item=item, target_date=entry_date).first()
+
+
+def _coerce_date(raw_value: str | None, default_value: date) -> date:
+    try:
+        return date.fromisoformat(raw_value) if raw_value else default_value
+    except ValueError:
+        return default_value
 
 
 @login_required
@@ -243,3 +250,107 @@ def worker_history(request: HttpRequest, worker_id: int) -> HttpResponse:
         "entries": entries,
     }
     return render(request, "production/reports/worker_history_modal.html", context)
+
+
+@login_required
+def waste_entry(request: HttpRequest) -> HttpResponse:
+    today = date.today()
+    waste_date_val = _coerce_date(request.POST.get("waste_date") or request.GET.get("waste_date"), today)
+
+    sections = _available_sections(request.user)
+    selected_section_id = request.POST.get("section") or request.GET.get("section") or (sections.first().id if sections else None)
+    selected_section = Section.objects.filter(id=selected_section_id).first() if selected_section_id else None
+
+    if selected_section and not _ensure_permission(request.user, selected_section):
+        return HttpResponseForbidden("You are not allowed to create waste entries for this section")
+
+    form_kwargs = {"section": selected_section, "waste_date": waste_date_val}
+    if request.method == "POST":
+        formset = WasteEntryFormSet(request.POST, prefix="waste", form_kwargs=form_kwargs)
+        if formset.is_valid() and selected_section:
+            created_entries = []
+            for form in formset:
+                data = form.cleaned_data
+                entry = WasteEntry(
+                    waste_date=waste_date_val,
+                    section=selected_section,
+                    item=data["item"],
+                    waste_qty=Decimal(data["waste_qty"]),
+                    reason=data.get("reason") or "",
+                    created_by=request.user,
+                )
+                entry.save()
+                created_entries.append(entry)
+            messages.success(request, f"Saved {len(created_entries)} waste entr{'y' if len(created_entries)==1 else 'ies'}")
+            return redirect("production:report-wastage")
+    else:
+        formset = WasteEntryFormSet(prefix="waste", initial=[{}], form_kwargs=form_kwargs)
+
+    context = {
+        "formset": formset,
+        "waste_date": waste_date_val,
+        "sections": sections,
+        "selected_section": selected_section,
+    }
+    return render(request, "production/waste_entry_form.html", context)
+
+
+@login_required
+def waste_entry_row(request: HttpRequest) -> HttpResponse:
+    section_id = request.GET.get("section")
+    waste_date_str = request.GET.get("waste_date")
+    form_count = int(request.GET.get("form_count", 0))
+    section = get_object_or_404(Section, id=section_id) if section_id else None
+    if section and not _ensure_permission(request.user, section):
+        return HttpResponseForbidden("Not allowed")
+    waste_date_val = _coerce_date(waste_date_str, date.today())
+    form = WasteEntryForm(prefix=f"waste-{form_count}", section=section, waste_date=waste_date_val)
+    html = render_to_string(
+        "production/waste_entry_row.html",
+        {"form": form, "index": form_count, "next_index": form_count + 1},
+        request=request,
+    )
+    return HttpResponse(html)
+
+
+@login_required
+def wastage_report(request: HttpRequest) -> HttpResponse:
+    today = date.today()
+    sections = _available_sections(request.user)
+    start_date_val = _coerce_date(request.GET.get("start_date"), today.replace(day=1))
+    end_date_val = _coerce_date(request.GET.get("end_date"), today)
+    section_id = request.GET.get("section")
+    selected_section = Section.objects.filter(id=section_id).first() if section_id else None
+
+    if selected_section and not _ensure_permission(request.user, selected_section):
+        return HttpResponseForbidden("Not allowed")
+
+    ledgers = DailyLedger.objects.select_related("section", "item").filter(
+        date__gte=start_date_val,
+        date__lte=end_date_val,
+        section__in=sections,
+    )
+    if selected_section:
+        ledgers = ledgers.filter(section=selected_section)
+
+    rows = []
+    for ledger in ledgers.order_by("-date", "section__name", "item__name"):
+        rows.append(
+            {
+                "date": ledger.date,
+                "section": ledger.section,
+                "item": ledger.item,
+                "total_available": ledger.total_available,
+                "waste_qty": ledger.waste_qty,
+                "waste_percentage": ledger.waste_percentage,
+            }
+        )
+
+    context = {
+        "rows": rows,
+        "sections": sections,
+        "selected_section": selected_section,
+        "start_date": start_date_val,
+        "end_date": end_date_val,
+    }
+    return render(request, "production/reports/wastage_report.html", context)

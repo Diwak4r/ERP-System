@@ -10,7 +10,7 @@ from django.contrib.admin.sites import AdminSite
 from django.urls import reverse
 
 from .admin import ProductionEntryAdmin
-from .models import Item, ProductionEntry, Section, TargetRule, Worker, DayLock, ProcessFlowEdge, DailyLedger, AuditEvent
+from .models import AuditEvent, DailyLedger, DayLock, Item, ProcessFlowEdge, ProductionEntry, Section, TargetRule, WasteEntry, Worker
 
 pytestmark = pytest.mark.django_db
 
@@ -205,3 +205,105 @@ def test_audit_event_created_on_admin_edit(admin_user, section, worker, item):
     pe_admin.save_model(request, entry, None, change=True)
 
     assert AuditEvent.objects.filter(model_name="ProductionEntry", action="UPDATE").count() == 1
+
+
+def test_waste_entry_updates_ledger(admin_user, section, item, client):
+    today = date.today()
+    DailyLedger.objects.create(
+        date=today,
+        section=section,
+        item=item,
+        opening_balance=Decimal("100.00"),
+    )
+    client.force_login(admin_user)
+    response = client.post(
+        reverse("production:waste-entry"),
+        data={
+            "waste_date": today.isoformat(),
+            "section": section.id,
+            "waste-TOTAL_FORMS": "1",
+            "waste-INITIAL_FORMS": "0",
+            "waste-MIN_NUM_FORMS": "0",
+            "waste-MAX_NUM_FORMS": "1000",
+            "waste-0-item": item.id,
+            "waste-0-waste_qty": "12.50",
+            "waste-0-reason": "Damaged batch",
+        },
+        follow=True,
+    )
+    assert response.status_code == 200
+    assert WasteEntry.objects.count() == 1
+    ledger = DailyLedger.objects.get(date=today, section=section, item=item)
+    assert ledger.waste_qty == Decimal("12.50")
+
+
+def test_waste_entry_permission_enforced(supervisor_user, item, client):
+    my_section = Section.objects.create(name="Cutting", code="CUT")
+    my_section.supervisors.add(supervisor_user)
+    other_section = Section.objects.create(name="Packing", code="PCK")
+    DailyLedger.objects.create(date=date.today(), section=other_section, item=item, opening_balance=Decimal("50.00"))
+
+    client.force_login(supervisor_user)
+    response = client.post(
+        reverse("production:waste-entry"),
+        data={
+            "waste_date": date.today().isoformat(),
+            "section": other_section.id,
+            "waste-TOTAL_FORMS": "1",
+            "waste-INITIAL_FORMS": "0",
+            "waste-MIN_NUM_FORMS": "0",
+            "waste-MAX_NUM_FORMS": "1000",
+            "waste-0-item": item.id,
+            "waste-0-waste_qty": "1.00",
+            "waste-0-reason": "Rejected",
+        },
+    )
+    assert response.status_code == 403
+    assert WasteEntry.objects.count() == 0
+
+
+def test_waste_entry_daylock_prevents_save(admin_user, section, item, client):
+    today = date.today()
+    DayLock.objects.create(section=section, lock_date=today, is_locked=True)
+    DailyLedger.objects.create(date=today, section=section, item=item, opening_balance=Decimal("20.00"))
+    client.force_login(admin_user)
+    response = client.post(
+        reverse("production:waste-entry"),
+        data={
+            "waste_date": today.isoformat(),
+            "section": section.id,
+            "waste-TOTAL_FORMS": "1",
+            "waste-INITIAL_FORMS": "0",
+            "waste-MIN_NUM_FORMS": "0",
+            "waste-MAX_NUM_FORMS": "1000",
+            "waste-0-item": item.id,
+            "waste-0-waste_qty": "2.00",
+            "waste-0-reason": "Lock test",
+        },
+    )
+    assert response.status_code == 200
+    assert WasteEntry.objects.count() == 0
+    assert b"is locked" in response.content
+
+
+def test_wastage_report_shows_percentage(admin_user, section, item, client):
+    ledger = DailyLedger.objects.create(
+        date=date.today(),
+        section=section,
+        item=item,
+        opening_balance=Decimal("80.00"),
+        received_from_prev=Decimal("20.00"),
+    )
+    WasteEntry.objects.create(
+        waste_date=ledger.date,
+        section=section,
+        item=item,
+        waste_qty=Decimal("10.00"),
+        reason="Cutoff waste",
+        created_by=admin_user,
+    )
+
+    client.force_login(admin_user)
+    response = client.get(reverse("production:report-wastage"))
+    assert response.status_code == 200
+    assert response.context["rows"][0]["waste_percentage"] == Decimal("10.00")

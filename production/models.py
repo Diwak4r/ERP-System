@@ -183,6 +183,74 @@ class ProductionEntry(models.Model):
             ledger.output_qty = total_output
             ledger.save(update_fields=["output_qty"])
 
+
+class WasteEntry(models.Model):
+    waste_date = models.DateField()
+    section = models.ForeignKey(Section, on_delete=models.PROTECT)
+    item = models.ForeignKey(Item, on_delete=models.PROTECT)
+    waste_qty = models.DecimalField(max_digits=12, decimal_places=2)
+    reason = models.CharField(max_length=255, blank=True, default="")
+    created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name="waste_entries")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-waste_date", "section__name", "item__name"]
+        indexes = [
+            models.Index(fields=["waste_date", "section", "item"]),
+        ]
+
+    def __str__(self) -> str:  # pragma: no cover - repr helper
+        return f"{self.waste_date} - {self.section} - {self.item} ({self.waste_qty})"
+
+    def clean(self) -> None:
+        if self.pk is None and self.waste_date and self.waste_date < date.today():
+            raise ValidationError("Cannot create backdated waste entries.")
+
+        if getattr(self, "section", None) and getattr(self, "waste_date", None):
+            lock = DayLock.objects.filter(section=self.section, lock_date=self.waste_date, is_locked=True).first()
+            if lock:
+                raise ValidationError(f"Section {self.section.name} is locked for {self.waste_date}.")
+
+        if getattr(self, "section", None) and getattr(self, "item", None) and getattr(self, "waste_date", None):
+            ledger, _ = DailyLedger.objects.get_or_create(date=self.waste_date, section=self.section, item=self.item)
+            available = ledger.total_available - ledger.output_qty
+            if available < Decimal("0.00"):
+                available = Decimal("0.00")
+
+            current_waste_qs = WasteEntry.objects.filter(
+                section=self.section,
+                item=self.item,
+                waste_date=self.waste_date,
+            )
+            if self.pk:
+                current_waste_qs = current_waste_qs.exclude(pk=self.pk)
+
+            current_waste = current_waste_qs.aggregate(total=models.Sum("waste_qty"))["total"] or Decimal("0.00")
+            proposed_waste = current_waste + (self.waste_qty or Decimal("0.00"))
+            if proposed_waste > available:
+                raise ValidationError(
+                    f"Waste ({proposed_waste}) exceeds remaining available inventory ({available}) "
+                    f"for {self.item} in {self.section.name}."
+                )
+
+    def save(self, *args, **kwargs):
+        super().save(*args, **kwargs)
+        if self.section and self.item and self.waste_date:
+            ledger, _ = DailyLedger.objects.get_or_create(
+                date=self.waste_date,
+                section=self.section,
+                item=self.item,
+            )
+            total_waste = WasteEntry.objects.filter(
+                section=self.section,
+                item=self.item,
+                waste_date=self.waste_date,
+            ).aggregate(total=models.Sum("waste_qty"))["total"] or Decimal("0.00")
+            ledger.waste_qty = total_waste
+            ledger.save(update_fields=["waste_qty"])
+
+
 class DayLock(models.Model):
     section = models.ForeignKey(Section, on_delete=models.CASCADE)
     lock_date = models.DateField()
@@ -246,5 +314,16 @@ class DailyLedger(models.Model):
         return f"{self.date} - {self.section} - {self.item}"
 
     @property
+    def total_available(self) -> Decimal:
+        return self.opening_balance + self.received_from_prev + self.manual_received
+
+    @property
     def closing_balance(self) -> Decimal:
-        return self.opening_balance + self.received_from_prev + self.manual_received - self.output_qty - self.waste_qty
+        return self.total_available - self.output_qty - self.waste_qty
+
+    @property
+    def waste_percentage(self) -> Decimal:
+        available = self.total_available
+        if available <= Decimal("0.00"):
+            return Decimal("0.00")
+        return ((self.waste_qty / available) * Decimal("100.00")).quantize(Decimal("0.01"))
