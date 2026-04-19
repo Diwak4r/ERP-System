@@ -12,6 +12,8 @@ from .models import (
     ProductionEntry,
     Section,
     TargetRule,
+    AttendanceLine,
+    AttendanceSheet,
     WasteEntry,
     Worker,
 )
@@ -166,3 +168,32 @@ class WasteEntryAdmin(admin.ModelAdmin):
     list_filter = ("waste_date", "section", "item")
     search_fields = ("item__name", "item__sku", "section__name", "reason")
     readonly_fields = ("created_at", "updated_at", "created_by")
+
+
+class AttendanceLineInline(admin.TabularInline):
+    model = AttendanceLine
+    extra = 1
+
+@admin.register(AttendanceSheet)
+class AttendanceSheetAdmin(admin.ModelAdmin):
+    list_display = ("attendance_date", "section", "created_by", "created_at")
+    list_filter = ("attendance_date", "section")
+    search_fields = ("section__name",)
+    readonly_fields = ("created_at", "updated_at", "created_by")
+    inlines = [AttendanceLineInline]
+
+    def save_model(self, request, obj, form, change):
+        before_data = None
+        if change:
+            old_obj = AttendanceSheet.objects.get(pk=obj.pk)
+            before_data = _serialize_model(old_obj)
+        else:
+            obj.created_by = request.user
+        super().save_model(request, obj, form, change)
+        action = "UPDATE" if change else "CREATE"
+        _log_audit_event(request, obj, action, before_data)
+
+    def delete_model(self, request, obj):
+        before_data = _serialize_model(obj)
+        super().delete_model(request, obj)
+        _log_audit_event(request, obj, "DELETE", before_data)

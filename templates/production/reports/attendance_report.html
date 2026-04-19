@@ -1,0 +1,50 @@
+{% load static %}
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Daily Attendance Report</title>
+    <style>
+        table { width: 100%; border-collapse: collapse; margin-bottom: 20px; }
+        th, td { padding: 8px; border: 1px solid #ddd; text-align: left; }
+        th { background-color: #f2f2f2; }
+    </style>
+</head>
+<body>
+    <h1>Daily Attendance Report</h1>
+
+    <form method="get">
+        <label>Date: <input type="date" name="attendance_date" value="{{ attendance_date|date:'Y-m-d' }}"></label>
+        <button type="submit">Filter</button>
+    </form>
+
+    <h2>Headcount Summary for {{ attendance_date }}</h2>
+    <p><strong>Total Present:</strong> {{ total_present }}</p>
+    <p><strong>Total Absent:</strong> {{ total_absent }}</p>
+
+    <h3>Section Breakdown</h3>
+    {% if report_data %}
+        <table>
+            <thead>
+                <tr>
+                    <th>Section</th>
+                    <th>Total Workers</th>
+                    <th>Present</th>
+                    <th>Absent</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for row in report_data %}
+                    <tr>
+                        <td>{{ row.section.name }}</td>
+                        <td>{{ row.total_count }}</td>
+                        <td>{{ row.present_count }}</td>
+                        <td>{{ row.absent_count }}</td>
+                    </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    {% else %}
+        <p>No attendance data recorded for this date in your sections.</p>
+    {% endif %}
+</body>
+</html>

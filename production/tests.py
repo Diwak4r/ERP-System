@@ -8,9 +8,19 @@ from django.core.exceptions import ValidationError
 from django.test import RequestFactory
 from django.contrib.admin.sites import AdminSite
 from django.urls import reverse
+from django.test import TestCase
+from django.contrib.messages import get_messages
+from django.test import TestCase
+from django.contrib.messages import get_messages
+from django.test import TestCase
+from django.contrib.messages import get_messages
+from django.test import TestCase
+from django.contrib.messages import get_messages
+from django.test import TestCase
+from django.contrib.messages import get_messages
 
 from .admin import ProductionEntryAdmin
-from .models import AuditEvent, DailyLedger, DayLock, Item, ProcessFlowEdge, ProductionEntry, Section, TargetRule, WasteEntry, Worker
+from .models import AttendanceSheet, AttendanceLine, AuditEvent, DailyLedger, DayLock, Item, ProcessFlowEdge, ProductionEntry, Section, TargetRule, WasteEntry, Worker
 
 pytestmark = pytest.mark.django_db
 
@@ -18,14 +28,14 @@ pytestmark = pytest.mark.django_db
 @pytest.fixture
 def admin_user(db):
     User = get_user_model()
-    user = User.objects.create_user(username="admin", password="pass", is_superuser=True)
+    return User.objects.create_user(username="admin", password="pass", is_superuser=True)
     return user
 
 
 @pytest.fixture
 def supervisor_user(db):
     User = get_user_model()
-    user = User.objects.create_user(username="supervisor", password="pass")
+    return User.objects.create_user(username="supervisor", password="pass")
     group, _ = Group.objects.get_or_create(name="SUPERVISOR")
     user.groups.add(group)
     return user
@@ -307,3 +317,90 @@ def test_wastage_report_shows_percentage(admin_user, section, item, client):
     response = client.get(reverse("production:report-wastage"))
     assert response.status_code == 200
     assert response.context["rows"][0]["waste_percentage"] == Decimal("10.00")
+
+
+class AttendanceTests(TestCase):
+    def setUp(self):
+        User = get_user_model()
+        self.user = User.objects.create_user(username="supervisor", password="password")
+        self.group = Group.objects.create(name="SUPERVISOR")
+        self.user.groups.add(self.group)
+
+        self.section = Section.objects.create(name="Cutting", code="CUT")
+        self.section.supervisors.add(self.user)
+
+        self.worker1 = Worker.objects.create(name="Worker 1", employee_code="W01")
+        self.worker2 = Worker.objects.create(name="Worker 2", employee_code="W02")
+
+        self.client.login(username="supervisor", password="password")
+
+    def test_attendance_sheet_creation(self):
+        url = reverse("production:attendance-entry")
+        today = date.today()
+
+        # We need management form data for formsets
+        data = {
+            "attendance_date": today.isoformat(),
+            "section": self.section.id,
+            "form-TOTAL_FORMS": "2",
+            "form-INITIAL_FORMS": "0",
+            "form-MIN_NUM_FORMS": "0",
+            "form-MAX_NUM_FORMS": "1000",
+            "form-0-worker": self.worker1.id,
+            "form-0-is_present": "on",
+            "form-0-notes": "",
+            "form-1-worker": self.worker2.id,
+            "form-1-is_present": "",
+            "form-1-notes": "Sick",
+        }
+
+        response = self.client.post(url, data)
+        self.assertEqual(response.status_code, 302)  # redirect on success
+
+        sheet = AttendanceSheet.objects.get(attendance_date=today, section=self.section)
+        self.assertEqual(sheet.lines.count(), 2)
+
+        w1_line = sheet.lines.get(worker=self.worker1)
+        self.assertTrue(w1_line.is_present)
+
+        w2_line = sheet.lines.get(worker=self.worker2)
+        self.assertFalse(w2_line.is_present)
+        self.assertEqual(w2_line.notes, "Sick")
+
+    def test_attendance_daylock_validation(self):
+        today = date.today()
+        # Lock the day
+        DayLock.objects.create(section=self.section, lock_date=today, is_locked=True)
+
+        url = reverse("production:attendance-entry")
+        data = {
+            "attendance_date": today.isoformat(),
+            "section": self.section.id,
+            "form-TOTAL_FORMS": "1",
+            "form-INITIAL_FORMS": "0",
+            "form-MIN_NUM_FORMS": "0",
+            "form-MAX_NUM_FORMS": "1000",
+            "form-0-worker": self.worker1.id,
+            "form-0-is_present": "on",
+            "form-0-notes": "",
+        }
+
+        response = self.client.post(url, data)
+        self.assertEqual(response.status_code, 200) # Form should re-render with errors
+        messages = list(get_messages(response.wsgi_request))
+        self.assertTrue(any("locked" in str(m).lower() for m in messages))
+        self.assertEqual(AttendanceSheet.objects.count(), 0)
+
+    def test_attendance_report(self):
+        today = date.today()
+        sheet = AttendanceSheet.objects.create(attendance_date=today, section=self.section, created_by=self.user)
+        AttendanceLine.objects.create(sheet=sheet, worker=self.worker1, is_present=True)
+        AttendanceLine.objects.create(sheet=sheet, worker=self.worker2, is_present=False)
+
+        url = reverse("production:report-attendance")
+        response = self.client.get(url, {"attendance_date": today.isoformat()})
+        self.assertEqual(response.status_code, 200)
+
+        self.assertContains(response, "Total Present:</strong> 1")
+        self.assertContains(response, "Total Absent:</strong> 1")
+        self.assertContains(response, "Cutting")

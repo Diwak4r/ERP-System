@@ -5,7 +5,7 @@ from typing import Optional
 
 from django import forms
 
-from .models import Item, ProductionEntry, Section, TargetRule, WasteEntry, Worker
+from .models import Item, ProductionEntry, Section, TargetRule, AttendanceLine, AttendanceSheet, WasteEntry, Worker
 
 
 from django.core.exceptions import ValidationError
@@ -204,3 +204,48 @@ class WasteEntryForm(forms.ModelForm):
 WasteEntryFormSet = forms.formset_factory(
     WasteEntryForm, formset=BaseWasteEntryFormSet, extra=0, min_num=1, validate_min=True
 )
+
+
+class BaseAttendanceLineFormSet(forms.BaseFormSet):
+    def __init__(self, *args, **kwargs):
+        self.form_kwargs = kwargs.get("form_kwargs", {})
+        self.section = self.form_kwargs.get("section")
+        self.attendance_date = self.form_kwargs.get("attendance_date")
+        self.worker_qs = Worker.objects.filter(is_active=True)
+        super().__init__(*args, **kwargs)
+
+        self.worker_choices = [(w.pk, str(w)) for w in self.worker_qs]
+        for form in self.forms:
+            form.fields["worker"].choices = [("", "---------")] + self.worker_choices
+            form.fields["worker"].queryset = self.worker_qs
+
+    def clean(self):
+        super().clean()
+        if any(self.errors):
+            return
+
+        worker_ids = set()
+        for form in self.forms:
+            if self.can_delete and self._should_delete_form(form):
+                continue
+            worker = form.cleaned_data.get("worker")
+            if worker:
+                if worker.pk in worker_ids:
+                    form.add_error("worker", "Duplicate entry for this worker.")
+                worker_ids.add(worker.pk)
+
+
+class AttendanceLineForm(forms.ModelForm):
+    class Meta:
+        model = AttendanceLine
+        fields = ["worker", "is_present", "notes"]
+
+    def __init__(self, *args, section: Optional[Section] = None, attendance_date: Optional[date] = None, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.fields["worker"].queryset = Worker.objects.filter(is_active=True)
+        self.section = section
+        self.attendance_date = attendance_date
+
+    def clean(self):
+        cleaned_data = super().clean()
+        return cleaned_data

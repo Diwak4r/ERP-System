@@ -13,4 +13,7 @@ urlpatterns = [
     path("reports/item-aggregate/", views.item_aggregate, name="report-item-aggregate"),
     path("reports/wastage/", views.wastage_report, name="report-wastage"),
     path("reports/worker-history/<int:worker_id>/", views.worker_history, name="report-worker-history"),
+    path("attendance/entry/", views.attendance_entry, name="attendance-entry"),
+    path("attendance/entry/row/", views.attendance_entry_row, name="attendance-entry-row"),
+    path("reports/attendance/", views.attendance_report, name="report-attendance"),
 ]

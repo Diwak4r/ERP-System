@@ -1,0 +1,25 @@
+<tr id="form-{{ index }}-row">
+    <td>
+        {{ form.id }}
+        {{ form.worker }}
+        {% if form.worker.errors %}
+            <span style="color: red;">{{ form.worker.errors.0 }}</span>
+        {% endif %}
+    </td>
+    <td>
+        {{ form.is_present }}
+        {% if form.is_present.errors %}
+            <span style="color: red;">{{ form.is_present.errors.0 }}</span>
+        {% endif %}
+    </td>
+    <td>
+        {{ form.notes }}
+        {% if form.notes.errors %}
+            <span style="color: red;">{{ form.notes.errors.0 }}</span>
+        {% endif %}
+    </td>
+    <td>
+        <button type="button" onclick="document.getElementById('form-{{ index }}-row').remove();">Remove</button>
+        <input type="hidden" name="form-{{ index }}-DELETE" id="id_form-{{ index }}-DELETE">
+    </td>
+</tr>

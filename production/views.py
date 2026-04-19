@@ -5,13 +5,19 @@ from decimal import Decimal
 
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
+from django import forms
 from django.http import HttpRequest, HttpResponse, HttpResponseForbidden
+from django.views.decorators.http import require_http_methods
 from django.shortcuts import get_object_or_404, redirect, render
 from django.template.loader import render_to_string
+from django.db import transaction
+from django.core.exceptions import ValidationError
+from django.urls import reverse
 from django.db.models import Sum, F, ExpressionWrapper, FloatField, Case, When, Value, BooleanField
 from django.db.models.functions import Cast
 
-from .forms import ProductionEntryForm, ProductionEntryFormSet, WasteEntryForm, WasteEntryFormSet
+from .models import AttendanceLine, AttendanceSheet
+from .forms import ProductionEntryForm, ProductionEntryFormSet, WasteEntryForm, WasteEntryFormSet, AttendanceLineForm, BaseAttendanceLineFormSet
 from .models import DailyLedger, Item, ProductionEntry, Section, TargetRule, WasteEntry, Worker
 
 ROLE_ADMIN = "ADMIN"
@@ -354,3 +360,203 @@ def wastage_report(request: HttpRequest) -> HttpResponse:
         "end_date": end_date_val,
     }
     return render(request, "production/reports/wastage_report.html", context)
+
+@login_required
+@require_http_methods(["GET", "POST"])
+def attendance_entry(request: HttpRequest) -> HttpResponse:
+    user = request.user
+    sections = _available_sections(user)
+    if not sections:
+        return HttpResponseForbidden("You don't have access to any sections.")
+
+    attendance_date_str = request.GET.get("attendance_date") or request.POST.get("attendance_date")
+    attendance_date = _coerce_date(attendance_date_str, date.today())
+
+    section_id_str = request.GET.get("section") or request.POST.get("section")
+    try:
+        section_id = int(section_id_str) if section_id_str else sections[0].id
+    except ValueError:
+        section_id = sections[0].id
+
+    selected_section = next((s for s in sections if s.id == section_id), None)
+    if not selected_section:
+        return HttpResponseForbidden("You don't have access to this section.")
+
+    AttendanceFormSet = forms.formset_factory(
+        AttendanceLineForm,
+        formset=BaseAttendanceLineFormSet,
+        extra=0,
+        can_delete=True,
+    )
+
+    if request.method == "POST":
+        formset = AttendanceFormSet(
+            request.POST,
+            form_kwargs={"section": selected_section, "attendance_date": attendance_date},
+        )
+        if formset.is_valid():
+            try:
+                with transaction.atomic():
+                    # Attempt to get or create the sheet
+                    sheet, created = AttendanceSheet.objects.get_or_create(
+                        attendance_date=attendance_date,
+                        section=selected_section,
+                        defaults={"created_by": request.user}
+                    )
+
+                    # Ensure DayLock validation is triggered
+                    sheet.clean()
+
+                    # Delete existing lines if this is an update to avoid duplicates if workers change
+                    if not created:
+                        AttendanceLine.objects.filter(sheet=sheet).delete()
+
+                    lines_to_create = []
+                    for form in formset.forms:
+                        if formset.can_delete and formset._should_delete_form(form):
+                            continue
+                        worker = form.cleaned_data.get("worker")
+                        is_present = form.cleaned_data.get("is_present", True)
+                        notes = form.cleaned_data.get("notes", "")
+
+                        if worker:
+                            line = AttendanceLine(
+                                sheet=sheet,
+                                worker=worker,
+                                is_present=is_present,
+                                notes=notes
+                            )
+                            lines_to_create.append(line)
+
+                    if lines_to_create:
+                        AttendanceLine.objects.bulk_create(lines_to_create)
+
+                messages.success(request, f"Attendance saved successfully for {attendance_date}.")
+                redirect_url = reverse("production:attendance-entry")
+                return redirect(f"{redirect_url}?attendance_date={attendance_date}&section={selected_section.id}")
+
+            except ValidationError as e:
+                if hasattr(e, "messages"):
+                    for msg in e.messages:
+                        messages.error(request, msg)
+                else:
+                    messages.error(request, str(e))
+        else:
+            messages.error(request, "Please correct the errors below.")
+    else:
+        # Check if we already have attendance for this day/section to populate it
+        existing_sheet = AttendanceSheet.objects.filter(
+            attendance_date=attendance_date, section=selected_section
+        ).first()
+
+        initial_data = []
+        if existing_sheet:
+             for line in existing_sheet.lines.select_related('worker').all():
+                 initial_data.append({
+                     'worker': line.worker_id,
+                     'is_present': line.is_present,
+                     'notes': line.notes
+                 })
+        else:
+             # Auto-populate all active workers
+             workers = Worker.objects.filter(is_active=True).order_by('name')
+             for w in workers:
+                 initial_data.append({
+                     'worker': w.id,
+                     'is_present': True,
+                     'notes': ''
+                 })
+
+        formset = AttendanceFormSet(
+            initial=initial_data,
+            form_kwargs={"section": selected_section, "attendance_date": attendance_date},
+        )
+        if initial_data:
+            formset.extra = len(initial_data)
+
+    context = {
+        "formset": formset,
+        "attendance_date": attendance_date,
+        "sections": sections,
+        "selected_section": selected_section,
+    }
+    return render(request, "production/attendance_entry_form.html", context)
+
+
+@login_required
+@require_http_methods(["GET"])
+def attendance_entry_row(request: HttpRequest) -> HttpResponse:
+    try:
+        form_count = int(request.GET.get("form_count", 0))
+    except ValueError:
+        form_count = 0
+
+    section_id = request.GET.get("section")
+    attendance_date_str = request.GET.get("attendance_date")
+
+    section = None
+    if section_id:
+        try:
+            section = Section.objects.get(id=section_id)
+        except Section.DoesNotExist:
+            pass
+
+    attendance_date = _coerce_date(attendance_date_str, date.today())
+
+    form = AttendanceLineForm(
+        prefix=f"form-{form_count}",
+        section=section,
+        attendance_date=attendance_date,
+    )
+    # Pre-evaluate choices for performance
+    worker_qs = Worker.objects.filter(is_active=True)
+    form.fields["worker"].choices = [("", "---------")] + [(w.pk, str(w)) for w in worker_qs]
+
+    context = {
+        "form": form,
+        "index": form_count,
+        "next_index": form_count + 1,
+    }
+    return render(request, "production/attendance_entry_row.html", context)
+
+
+@login_required
+@require_http_methods(["GET"])
+def attendance_report(request: HttpRequest) -> HttpResponse:
+    user = request.user
+    sections = _available_sections(user)
+
+    attendance_date_str = request.GET.get("attendance_date")
+    attendance_date = _coerce_date(attendance_date_str, date.today())
+
+    sheets = AttendanceSheet.objects.filter(
+        attendance_date=attendance_date,
+        section__in=sections
+    ).select_related('section').prefetch_related('lines')
+
+    report_data = []
+    total_present = 0
+    total_absent = 0
+
+    for sheet in sheets:
+        lines = list(sheet.lines.all())
+        present_count = sum(1 for line in lines if line.is_present)
+        absent_count = len(lines) - present_count
+
+        total_present += present_count
+        total_absent += absent_count
+
+        report_data.append({
+            'section': sheet.section,
+            'present_count': present_count,
+            'absent_count': absent_count,
+            'total_count': len(lines)
+        })
+
+    context = {
+        "report_data": report_data,
+        "total_present": total_present,
+        "total_absent": total_absent,
+        "attendance_date": attendance_date,
+    }
+    return render(request, "production/reports/attendance_report.html", context)

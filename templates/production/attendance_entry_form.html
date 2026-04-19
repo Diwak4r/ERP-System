@@ -1,0 +1,66 @@
+{% load static %}
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Attendance Entry</title>
+    <script src="https://unpkg.com/htmx.org@1.9.12"></script>
+    <style>
+        table { width: 100%; border-collapse: collapse; }
+        th, td { padding: 8px; border: 1px solid #ddd; }
+        .present { color: green; }
+        .absent { color: red; }
+    </style>
+</head>
+<body>
+    <h1>Attendance Entry</h1>
+
+    {% if messages %}
+        <ul class="messages">
+            {% for message in messages %}
+                <li{% if message.tags %} class="{{ message.tags }}"{% endif %}>{{ message }}</li>
+            {% endfor %}
+        </ul>
+    {% endif %}
+
+    <form method="post" hx-boost="false">
+        {% csrf_token %}
+        <label>Date:
+            <input type="date" name="attendance_date" value="{{ attendance_date|date:'Y-m-d' }}"
+                   hx-get="{% url 'production:attendance-entry' %}"
+                   hx-include="[name='section']"
+                   hx-target="body">
+        </label>
+        <label>Section:
+            <select name="section"
+                    hx-get="{% url 'production:attendance-entry' %}"
+                    hx-include="[name='attendance_date']"
+                    hx-target="body">
+                {% for section in sections %}
+                    <option value="{{ section.id }}" {% if section.id == selected_section.id %}selected{% endif %}>{{ section.name }}</option>
+                {% endfor %}
+            </select>
+        </label>
+        <table id="attendance-table">
+            <thead>
+                <tr>
+                    <th>Worker</th>
+                    <th>Present?</th>
+                    <th>Notes</th>
+                </tr>
+            </thead>
+            <tbody id="attendance-rows">
+                {{ formset.management_form }}
+                {% for form in formset.forms %}
+                    {% include "production/attendance_entry_row.html" with form=form index=forloop.counter0 next_index=formset.total_form_count %}
+                {% endfor %}
+            </tbody>
+        </table>
+        <button type="button"
+            hx-get="{% url 'production:attendance-entry-row' %}?form_count={{ formset.total_form_count }}&section={{ selected_section.id }}&attendance_date={{ attendance_date|date:'Y-m-d' }}"
+            hx-target="#attendance-rows" hx-swap="beforeend">
+            Add Row
+        </button>
+        <button type="submit">Save Attendance</button>
+    </form>
+</body>
+</html>
