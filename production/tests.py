@@ -5,12 +5,12 @@ import pytest
 from django.contrib.auth import get_user_model
 from django.contrib.auth.models import Group
 from django.core.exceptions import ValidationError
-from django.test import RequestFactory
+from django.test import RequestFactory, TestCase
 from django.contrib.admin.sites import AdminSite
 from django.urls import reverse
 
 from .admin import ProductionEntryAdmin
-from .models import AuditEvent, DailyLedger, DayLock, Item, ProcessFlowEdge, ProductionEntry, Section, TargetRule, WasteEntry, Worker
+from .models import AuditEvent, DailyLedger, DayLock, Item, ProcessFlowEdge, ProductionEntry, Section, TargetRule, WasteEntry, Worker, AttendanceSheet, AttendanceLine
 
 pytestmark = pytest.mark.django_db
 
@@ -307,3 +307,119 @@ def test_wastage_report_shows_percentage(admin_user, section, item, client):
     response = client.get(reverse("production:report-wastage"))
     assert response.status_code == 200
     assert response.context["rows"][0]["waste_percentage"] == Decimal("10.00")
+
+class AttendanceModelTests(TestCase):
+    def setUp(self):
+        User = get_user_model()
+        self.user = User.objects.create_user(username="test_user", password="password")
+        self.section = Section.objects.create(name="Assembly", code="ASSY")
+        self.worker1 = Worker.objects.create(name="John", employee_code="E01")
+        self.worker2 = Worker.objects.create(name="Jane", employee_code="E02")
+
+    def test_attendance_sheet_creation(self):
+        sheet = AttendanceSheet.objects.create(
+            attendance_date=date.today(),
+            section=self.section,
+            created_by=self.user,
+        )
+        line1 = AttendanceLine.objects.create(sheet=sheet, worker=self.worker1, is_present=True)
+        line2 = AttendanceLine.objects.create(sheet=sheet, worker=self.worker2, is_present=False)
+
+        self.assertEqual(sheet.lines.count(), 2)
+        self.assertEqual(sheet.lines.filter(is_present=True).count(), 1)
+
+    def test_anti_excel_rule(self):
+        yesterday = date.today() - timedelta(days=1)
+        sheet = AttendanceSheet(
+            attendance_date=yesterday,
+            section=self.section,
+            created_by=self.user,
+        )
+        with self.assertRaisesMessage(ValidationError, "Cannot create backdated attendance entries."):
+            sheet.clean()
+
+    def test_daylock_rule(self):
+        today = date.today()
+        DayLock.objects.create(section=self.section, lock_date=today, is_locked=True)
+        sheet = AttendanceSheet(
+            attendance_date=today,
+            section=self.section,
+            created_by=self.user,
+        )
+        with self.assertRaisesMessage(ValidationError, f"Section {self.section.name} is locked for {today}."):
+            sheet.clean()
+
+
+class AttendanceViewTests(TestCase):
+    def setUp(self):
+        User = get_user_model()
+        self.admin = User.objects.create_superuser(username="admin", password="password")
+
+        self.supervisor = User.objects.create_user(username="supervisor", password="password")
+        group, _ = Group.objects.get_or_create(name="SUPERVISOR")
+        self.supervisor.groups.add(group)
+
+        self.section = Section.objects.create(name="Assembly", code="ASSY")
+        self.section.supervisors.add(self.supervisor)
+
+        self.worker1 = Worker.objects.create(name="John", employee_code="E01")
+        self.worker2 = Worker.objects.create(name="Jane", employee_code="E02")
+
+        self.client.login(username="supervisor", password="password")
+
+    def test_attendance_entry_get(self):
+        response = self.client.get(reverse("production:attendance-entry"))
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Attendance Entry")
+
+    def test_attendance_entry_post(self):
+        today = date.today()
+        response = self.client.post(reverse("production:attendance-entry"), {
+            "attendance_date": today.isoformat(),
+            "section": self.section.id,
+            "workers": [self.worker1.id], # John present, Jane absent
+        })
+        self.assertRedirects(response, reverse("production:report-attendance"))
+
+        sheet = AttendanceSheet.objects.get(attendance_date=today, section=self.section)
+        self.assertEqual(sheet.lines.count(), 2) # Total workers
+        self.assertTrue(sheet.lines.get(worker=self.worker1).is_present)
+        self.assertFalse(sheet.lines.get(worker=self.worker2).is_present)
+
+    def test_attendance_entry_post_modify(self):
+        today = date.today()
+        # First entry
+        self.client.post(reverse("production:attendance-entry"), {
+            "attendance_date": today.isoformat(),
+            "section": self.section.id,
+            "workers": [self.worker1.id],
+        })
+
+        # Modify entry
+        self.client.post(reverse("production:attendance-entry"), {
+            "attendance_date": today.isoformat(),
+            "section": self.section.id,
+            "workers": [self.worker2.id],
+        })
+
+        sheet = AttendanceSheet.objects.get(attendance_date=today, section=self.section)
+        self.assertEqual(sheet.lines.count(), 2)
+        self.assertFalse(sheet.lines.get(worker=self.worker1).is_present)
+        self.assertTrue(sheet.lines.get(worker=self.worker2).is_present)
+
+    def test_attendance_report(self):
+        today = date.today()
+        sheet = AttendanceSheet.objects.create(attendance_date=today, section=self.section, created_by=self.admin)
+        AttendanceLine.objects.create(sheet=sheet, worker=self.worker1, is_present=True)
+        AttendanceLine.objects.create(sheet=sheet, worker=self.worker2, is_present=False)
+
+        response = self.client.get(reverse("production:report-attendance"))
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Attendance Report")
+        self.assertContains(response, self.section.name)
+
+        # In context, the sheets are annotated
+        sheets = response.context["sheets"]
+        self.assertEqual(len(sheets), 1)
+        self.assertEqual(sheets[0].present_count, 1)
+        self.assertEqual(sheets[0].total_count, 2)

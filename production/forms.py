@@ -5,7 +5,7 @@ from typing import Optional
 
 from django import forms
 
-from .models import Item, ProductionEntry, Section, TargetRule, WasteEntry, Worker
+from .models import Item, ProductionEntry, Section, TargetRule, WasteEntry, Worker, AttendanceSheet
 
 
 from django.core.exceptions import ValidationError
@@ -204,3 +204,37 @@ class WasteEntryForm(forms.ModelForm):
 WasteEntryFormSet = forms.formset_factory(
     WasteEntryForm, formset=BaseWasteEntryFormSet, extra=0, min_num=1, validate_min=True
 )
+
+
+class AttendanceSheetForm(forms.ModelForm):
+    workers = forms.ModelMultipleChoiceField(
+        queryset=Worker.objects.filter(is_active=True),
+        widget=forms.CheckboxSelectMultiple,
+        required=False,
+    )
+
+    class Meta:
+        model = AttendanceSheet
+        fields: list[str] = []  # We don't need direct fields here since section/date are handled in view
+
+    def __init__(self, *args, section: Optional[Section] = None, attendance_date: Optional[date] = None, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.section = section
+        self.attendance_date = attendance_date
+
+    def clean(self):
+        cleaned = super().clean()
+        if not self.errors:
+            sheet = AttendanceSheet(
+                attendance_date=self.attendance_date,
+                section=self.section,
+            )
+            try:
+                sheet.clean()
+            except ValidationError as e:
+                if hasattr(e, "messages"):
+                    for msg in e.messages:
+                        self.add_error(None, msg)
+                else:
+                    self.add_error(None, str(e))
+        return cleaned

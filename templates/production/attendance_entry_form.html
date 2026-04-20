@@ -1,0 +1,60 @@
+{% load static %}
+<!DOCTYPE html>
+<html>
+<head>
+    <script src="https://unpkg.com/htmx.org@1.9.12"></script>
+    <title>Attendance Entry</title>
+    <style>
+        .error { color: red; }
+        .success { color: green; }
+        ul { list-style-type: none; padding: 0; }
+        li { margin-bottom: 5px; }
+    </style>
+</head>
+<body>
+    <h1>Attendance Entry</h1>
+
+    {% if messages %}
+        <ul class="messages">
+            {% for message in messages %}
+            <li{% if message.tags %} class="{{ message.tags }}"{% endif %}>{{ message }}</li>
+            {% endfor %}
+        </ul>
+    {% endif %}
+
+    <form method="get" hx-get="{% url 'production:attendance-entry' %}" hx-target="body">
+        <label>Date: <input type="date" name="attendance_date" value="{{ attendance_date|date:'Y-m-d' }}" hx-get="{% url 'production:attendance-entry' %}" hx-target="body"></label>
+        <label>Section:
+            <select name="section" hx-get="{% url 'production:attendance-entry' %}" hx-target="body">
+                {% for section in sections %}
+                    <option value="{{ section.id }}" {% if section.id == selected_section.id %}selected{% endif %}>{{ section.name }}</option>
+                {% endfor %}
+            </select>
+        </label>
+    </form>
+
+    <hr>
+
+    {% if existing_sheet %}
+    <p><strong>Note:</strong> Editing existing attendance for this date/section.</p>
+    {% endif %}
+
+    <form method="post" hx-post="{% url 'production:attendance-entry' %}" hx-target="body">
+        {% csrf_token %}
+        <input type="hidden" name="attendance_date" value="{{ attendance_date|date:'Y-m-d' }}">
+        <input type="hidden" name="section" value="{{ selected_section.id }}">
+
+        {% if form.non_field_errors %}
+        <div class="error">
+            {{ form.non_field_errors }}
+        </div>
+        {% endif %}
+
+        <h3>Select Present Workers</h3>
+        {{ form.workers }}
+
+        <br><br>
+        <button type="submit">Save Attendance</button>
+    </form>
+</body>
+</html>
