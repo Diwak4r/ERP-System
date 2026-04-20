@@ -322,8 +322,8 @@ class AttendanceModelTests(TestCase):
             section=self.section,
             created_by=self.user,
         )
-        line1 = AttendanceLine.objects.create(sheet=sheet, worker=self.worker1, is_present=True)
-        line2 = AttendanceLine.objects.create(sheet=sheet, worker=self.worker2, is_present=False)
+        AttendanceLine.objects.create(sheet=sheet, worker=self.worker1, is_present=True)
+        AttendanceLine.objects.create(sheet=sheet, worker=self.worker2, is_present=False)
 
         self.assertEqual(sheet.lines.count(), 2)
         self.assertEqual(sheet.lines.filter(is_present=True).count(), 1)
