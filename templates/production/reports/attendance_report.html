@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Attendance Report</title>
+</head>
+<body>
+    <h1>Attendance Report</h1>
+
+    <form method="get">
+        <label for="date">Date:</label>
+        <input id="date" name="date" type="date" value="{{ report_date|date:'Y-m-d' }}">
+
+        <label for="section">Section:</label>
+        <select id="section" name="section">
+            <option value="">All</option>
+            {% for section in sections %}
+                <option value="{{ section.id }}" {% if selected_section and section.id == selected_section.id %}selected{% endif %}>{{ section.name }}</option>
+            {% endfor %}
+        </select>
+
+        <button type="submit">Filter</button>
+    </form>
+
+    <h2>Daily Section Attendance ({{ report_date }})</h2>
+    <table border="1" width="100%">
+        <thead>
+            <tr>
+                <th>Section</th>
+                <th>Present Count</th>
+                <th>Workers</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for row in daily_rows %}
+                <tr>
+                    <td>{{ row.sheet.section.name }}</td>
+                    <td>{{ row.present_count }}</td>
+                    <td>
+                        {% for worker in row.workers %}
+                            {{ worker.name }}{% if not forloop.last %}, {% endif %}
+                        {% empty %}
+                            No workers marked present.
+                        {% endfor %}
+                    </td>
+                </tr>
+            {% empty %}
+                <tr>
+                    <td colspan="3">No attendance records found for the selected filters.</td>
+                </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+
+    <h2>Monthly Headcount Trend</h2>
+    <table border="1" width="100%">
+        <thead>
+            <tr>
+                <th>Date</th>
+                <th>Section</th>
+                <th>Present Count</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for row in trend_rows %}
+                <tr>
+                    <td>{{ row.attendance_date }}</td>
+                    <td>{{ row.section__name }}</td>
+                    <td>{{ row.present_count }}</td>
+                </tr>
+            {% empty %}
+                <tr>
+                    <td colspan="3">No headcount trend data available.</td>
+                </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</body>
+</html>

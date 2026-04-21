@@ -5,7 +5,7 @@ from typing import Optional
 
 from django import forms
 
-from .models import Item, ProductionEntry, Section, TargetRule, WasteEntry, Worker
+from .models import AttendanceSheet, Item, ProductionEntry, Section, TargetRule, WasteEntry, Worker
 
 
 from django.core.exceptions import ValidationError
@@ -204,3 +204,38 @@ class WasteEntryForm(forms.ModelForm):
 WasteEntryFormSet = forms.formset_factory(
     WasteEntryForm, formset=BaseWasteEntryFormSet, extra=0, min_num=1, validate_min=True
 )
+
+
+class AttendanceEntryForm(forms.Form):
+    attendance_date = forms.DateField(widget=forms.DateInput(attrs={"type": "date"}))
+    section = forms.ModelChoiceField(queryset=Section.objects.none())
+    workers = forms.ModelMultipleChoiceField(
+        queryset=Worker.objects.none(),
+        widget=forms.SelectMultiple(attrs={"size": 10}),
+    )
+
+    def __init__(self, *args, sections=None, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.fields["section"].queryset = sections if sections is not None else Section.objects.none()
+        self.fields["workers"].queryset = Worker.objects.filter(is_active=True)
+
+    def clean(self):
+        cleaned = super().clean()
+        section = cleaned.get("section")
+        attendance_date = cleaned.get("attendance_date")
+        if section and attendance_date:
+            existing = AttendanceSheet.objects.filter(
+                section=section,
+                attendance_date=attendance_date,
+            ).first()
+            sheet = existing or AttendanceSheet(
+                section=section,
+                attendance_date=attendance_date,
+                created_by=self.initial.get("created_by"),
+            )
+            try:
+                sheet.clean()
+            except ValidationError as exc:
+                for message in exc.messages:
+                    self.add_error(None, message)
+        return cleaned
