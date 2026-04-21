@@ -41,6 +41,66 @@ The core objective is to create a seamless, centralized ERP system to track fact
 - Enforce RBAC and "no backdated edits" with audit logs.
 - **Backend:** Use **Supabase (PostgreSQL)** for the production database. Ensure the Django `DATABASES` setting is configured to use the Supabase connection string securely via environment variables.
 
+## ✅ Completed Phases (DO NOT RE-IMPLEMENT)
+The following phases are merged to `main`. Skip them entirely:
+- Phase 0A: AGENTS.md ✅
+- Phase 0B: Docker + Django setup ✅ (PR #47)
+- Phase 1A: Production Entry Module ✅
+- Phase 1B: Aggregated Reports ✅ (PR #44)
+- Phase 1C: DayLock + AuditEvent ✅ (PR #48)
+- Phase 2A: Inventory/Process Ledger ✅ (PR #48)
+- Phase 2B: Wastage Capture ✅ (PR #51)
+- Phase 3A: Attendance Module ✅ (PR #55)
+
+## 🎯 CURRENT TASK: Phase 4A — Machine Downtime Logging
+
+Implement the Machine Downtime module per `IMPLEMENTATION_GUIDE.md § Phase 4A`.
+
+### Model: `MachineDowntime`
+```python
+# Required fields:
+machine          # FK → Machine (section-scoped)
+downtime_date    # DateField
+start_time       # TimeField
+end_time         # TimeField (nullable, for ongoing)
+duration_minutes # IntegerField, auto-computed on save
+reason           # TextField
+logged_by        # FK → User (supervisor who entered)
+created_at       # auto_now_add
+```
+
+### Business Rules
+1. **DayLock applies** — supervisors cannot log downtime for a locked day.
+2. **Overlap prevention** — two entries for same machine on same day cannot overlap in time.
+3. **Dashboard alert** — machines with downtime today must show a red alert on the dashboard.
+4. **RBAC** — supervisors log for their section's machines only; admins see all.
+5. `duration_minutes` must auto-compute from `start_time` and `end_time` on `clean()`/`save()`.
+
+### Required Deliverables
+- [ ] `MachineDowntime` model with migration
+- [ ] `MachineDowntimeForm` with machine dropdown scoped to supervisor's section
+- [ ] View: `downtime_entry` (POST, supervisor only, locked by DayLock)
+- [ ] View: `downtime_list` (GET, filters by date and section)
+- [ ] Template: `production/downtime_entry_form.html`
+- [ ] Template: `production/reports/downtime_list.html`
+- [ ] Admin registration (MachineDowntime with inline view)
+- [ ] URL patterns registered in `production/urls.py`
+- [ ] Unit tests: overlap prevention, DayLock block, duration calculation, RBAC
+
+### Verification Commands
+```bash
+docker compose exec web python manage.py migrate
+docker compose exec web pytest production/tests.py -v
+docker compose exec web ruff check .
+```
+
+### Delivery
+- Create a new branch: `feat/phase-4a-machine-downtime`
+- Open a PR targeting `main` — do NOT push directly to main
+- PR title: `feat: Phase 4A — Machine Downtime Logging`
+
+---
+
 ## Code style
 - Python: Django, HTMX, ruff, mypy, pytest.
 - Django best practices: settings split, strict CSRF, secure cookies, timezone-aware datetimes.
