@@ -5,7 +5,7 @@ from typing import Optional
 
 from django import forms
 
-from .models import AttendanceSheet, Item, ProductionEntry, Section, TargetRule, WasteEntry, Worker
+from .models import AttendanceSheet, Item, Machine, MachineDowntime, ProductionEntry, Section, TargetRule, WasteEntry, Worker
 
 
 from django.core.exceptions import ValidationError
@@ -238,4 +238,51 @@ class AttendanceEntryForm(forms.Form):
             except ValidationError as exc:
                 for message in exc.messages:
                     self.add_error(None, message)
+        return cleaned
+
+
+class MachineDowntimeForm(forms.ModelForm):
+    def __init__(self, *args, sections=None, **kwargs):
+        super().__init__(*args, **kwargs)
+        if sections is not None:
+            self.fields["machine"].queryset = Machine.objects.filter(section__in=sections, is_active=True)
+        else:
+            self.fields["machine"].queryset = Machine.objects.none()
+
+        self.fields["start_time"].widget = forms.TimeInput(attrs={"type": "time"})
+        self.fields["end_time"].widget = forms.TimeInput(attrs={"type": "time"})
+        self.fields["downtime_date"].widget = forms.DateInput(attrs={"type": "date"})
+
+    class Meta:
+        model = MachineDowntime
+        fields = ["downtime_date", "machine", "start_time", "end_time", "reason"]
+        widgets = {
+            "reason": forms.Textarea(attrs={"rows": 3}),
+        }
+
+    def clean(self):
+        cleaned = super().clean()
+        if not self.errors:
+            # We can rely on the model's clean method to catch overlap and DayLock,
+            # but we need to pass a temporary instance to clean().
+            instance = getattr(self, "instance", None)
+            if instance and instance.pk:
+                entry = instance
+            else:
+                entry = MachineDowntime(
+                    machine=cleaned.get("machine"),
+                    downtime_date=cleaned.get("downtime_date"),
+                    start_time=cleaned.get("start_time"),
+                    end_time=cleaned.get("end_time"),
+                    reason=cleaned.get("reason", ""),
+                )
+
+            try:
+                entry.clean()
+            except ValidationError as e:
+                if hasattr(e, "messages"):
+                    for msg in e.messages:
+                        self.add_error(None, msg)
+                else:
+                    self.add_error(None, str(e))
         return cleaned

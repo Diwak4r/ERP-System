@@ -13,8 +13,8 @@ from django.db import transaction
 from django.db.models import Sum, F, ExpressionWrapper, FloatField, Case, When, Value, BooleanField, Count, Q
 from django.db.models.functions import Cast
 
-from .forms import AttendanceEntryForm, ProductionEntryForm, ProductionEntryFormSet, WasteEntryForm, WasteEntryFormSet
-from .models import AttendanceLine, AttendanceSheet, DailyLedger, Item, ProductionEntry, Section, TargetRule, WasteEntry, Worker
+from .forms import MachineDowntimeForm, AttendanceEntryForm, ProductionEntryForm, ProductionEntryFormSet, WasteEntryForm, WasteEntryFormSet
+from .models import Machine, MachineDowntime, AttendanceLine, AttendanceSheet, DailyLedger, Item, ProductionEntry, Section, TargetRule, WasteEntry, Worker
 
 ROLE_ADMIN = "ADMIN"
 ROLE_SUPERVISOR = "SUPERVISOR"
@@ -491,3 +491,69 @@ def wastage_report(request: HttpRequest) -> HttpResponse:
         "end_date": end_date_val,
     }
     return render(request, "production/reports/wastage_report.html", context)
+
+
+@login_required
+def downtime_entry(request: HttpRequest) -> HttpResponse:
+    today = date.today()
+    sections = _available_sections(request.user)
+
+    initial_date = _coerce_date(request.POST.get("downtime_date") or request.GET.get("downtime_date"), today)
+
+    if request.method == "POST":
+        form = MachineDowntimeForm(request.POST, sections=sections)
+        if form.is_valid():
+            # RBAC check: Ensure machine belongs to an allowed section
+            machine = form.cleaned_data["machine"]
+            if not _ensure_permission(request.user, machine.section):
+                return HttpResponseForbidden("Not allowed to log downtime for this machine.")
+
+            entry = form.save(commit=False)
+            entry.logged_by = request.user
+            entry.save()
+
+            messages.success(request, f"Downtime logged for {machine.name}.")
+            return redirect("production:downtime-list")
+    else:
+        form = MachineDowntimeForm(sections=sections, initial={"downtime_date": initial_date})
+
+    context = {
+        "form": form,
+    }
+    return render(request, "production/downtime_entry_form.html", context)
+
+
+@login_required
+def downtime_list(request: HttpRequest) -> HttpResponse:
+    today = date.today()
+    sections = _available_sections(request.user)
+    report_date = _coerce_date(request.GET.get("date"), today)
+    section_id = request.GET.get("section")
+
+    selected_section = Section.objects.filter(id=section_id).first() if section_id else None
+
+    if selected_section and not _ensure_permission(request.user, selected_section):
+        return HttpResponseForbidden("Not allowed")
+
+    machines = Machine.objects.filter(section__in=sections, is_active=True)
+    if selected_section:
+        machines = machines.filter(section=selected_section)
+
+    # Get downtimes for the date
+    downtimes = MachineDowntime.objects.select_related("machine").filter(
+        downtime_date=report_date,
+        machine__in=machines,
+    )
+
+    # Create a mapping to quickly highlight machines with downtime
+    down_machine_ids = set(downtimes.values_list("machine_id", flat=True))
+
+    context = {
+        "report_date": report_date,
+        "sections": sections,
+        "selected_section": selected_section,
+        "downtimes": downtimes.order_by("machine__name", "start_time"),
+        "down_machine_ids": down_machine_ids,
+        "machines": machines,
+    }
+    return render(request, "production/reports/downtime_list.html", context)

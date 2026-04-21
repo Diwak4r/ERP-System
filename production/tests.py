@@ -1,16 +1,16 @@
-from datetime import date, timedelta
+from datetime import date, time, timedelta
 from decimal import Decimal
 
 import pytest
 from django.contrib.auth import get_user_model
 from django.contrib.auth.models import Group
 from django.core.exceptions import ValidationError
-from django.test import RequestFactory
+from django.test import RequestFactory, TestCase
 from django.contrib.admin.sites import AdminSite
 from django.urls import reverse
 
 from .admin import ProductionEntryAdmin
-from .models import AttendanceLine, AttendanceSheet, AuditEvent, DailyLedger, DayLock, Item, ProcessFlowEdge, ProductionEntry, Section, TargetRule, WasteEntry, Worker
+from .models import AttendanceLine, AttendanceSheet, AuditEvent, DailyLedger, DayLock, Item, Machine, MachineDowntime, ProcessFlowEdge, ProductionEntry, Section, TargetRule, WasteEntry, Worker
 
 pytestmark = pytest.mark.django_db
 
@@ -393,3 +393,144 @@ def test_attendance_report_shows_daily_and_trend_data(admin_user, section, worke
     assert response.status_code == 200
     assert response.context["daily_rows"][0]["present_count"] == 2
     assert list(response.context["trend_rows"])[0]["present_count"] == 2
+
+
+class MachineDowntimeTests(TestCase):
+    def setUp(self):
+        User = get_user_model()
+        self.user = User.objects.create_user(username="supervisor", password="pw")
+        self.section = Section.objects.create(name="Packing", code="PCK")
+        self.section.supervisors.add(self.user)
+        self.machine = Machine.objects.create(section=self.section, name="Packer 1", machine_code="P1")
+        self.machine2 = Machine.objects.create(section=self.section, name="Packer 2", machine_code="P2")
+        self.today = date.today()
+
+    def test_downtime_duration_calculation(self):
+        dt = MachineDowntime(
+            machine=self.machine,
+            downtime_date=self.today,
+            start_time=time(10, 0),
+            end_time=time(11, 30),
+            logged_by=self.user,
+        )
+        dt.save()
+        self.assertEqual(dt.duration_minutes, 90)
+
+    def test_downtime_overlap_prevention(self):
+        MachineDowntime.objects.create(
+            machine=self.machine,
+            downtime_date=self.today,
+            start_time=time(10, 0),
+            end_time=time(12, 0),
+            logged_by=self.user,
+        )
+
+        # Overlapping start time
+        with self.assertRaises(ValidationError):
+            dt = MachineDowntime(
+                machine=self.machine,
+                downtime_date=self.today,
+                start_time=time(11, 0),
+                end_time=time(13, 0),
+                logged_by=self.user,
+            )
+            dt.clean()
+
+        # Enveloping
+        with self.assertRaises(ValidationError):
+            dt = MachineDowntime(
+                machine=self.machine,
+                downtime_date=self.today,
+                start_time=time(9, 0),
+                end_time=time(13, 0),
+                logged_by=self.user,
+            )
+            dt.clean()
+
+        # No overlap (before)
+        dt_before = MachineDowntime(
+            machine=self.machine,
+            downtime_date=self.today,
+            start_time=time(8, 0),
+            end_time=time(9, 0),
+            logged_by=self.user,
+        )
+        dt_before.clean()  # Should not raise
+
+        # No overlap (different machine)
+        dt_other_machine = MachineDowntime(
+            machine=self.machine2,
+            downtime_date=self.today,
+            start_time=time(10, 0),
+            end_time=time(12, 0),
+            logged_by=self.user,
+        )
+        dt_other_machine.clean()  # Should not raise
+
+    def test_daylock_blocks_downtime(self):
+        DayLock.objects.create(section=self.section, lock_date=self.today, is_locked=True)
+
+        with self.assertRaises(ValidationError) as cm:
+            dt = MachineDowntime(
+                machine=self.machine,
+                downtime_date=self.today,
+                start_time=time(10, 0),
+                end_time=time(12, 0),
+                logged_by=self.user,
+            )
+            dt.clean()
+        self.assertIn("locked", str(cm.exception))
+
+    def test_backdated_downtime_prevented(self):
+        past_date = date.today() - timedelta(days=1)
+        with self.assertRaises(ValidationError) as cm:
+            dt = MachineDowntime(
+                machine=self.machine,
+                downtime_date=past_date,
+                start_time=time(10, 0),
+                end_time=time(12, 0),
+                logged_by=self.user,
+            )
+            dt.clean()
+        self.assertIn("backdated", str(cm.exception))
+
+class DowntimeViewsTests(TestCase):
+    def setUp(self):
+        User = get_user_model()
+        self.user = User.objects.create_user(username="supervisor", password="pw")
+        self.section = Section.objects.create(name="Packing", code="PCK")
+        self.section.supervisors.add(self.user)
+        self.machine = Machine.objects.create(section=self.section, name="Packer 1", machine_code="P1")
+        self.user.groups.add(Group.objects.get_or_create(name="SUPERVISOR")[0])
+        self.client.login(username="supervisor", password="pw")
+        self.today = date.today()
+
+    def test_downtime_entry_view_get(self):
+        response = self.client.get(reverse("production:downtime-entry"))
+        self.assertEqual(response.status_code, 200)
+
+    def test_downtime_entry_view_post(self):
+        data = {
+            "downtime_date": self.today.isoformat(),
+            "machine": self.machine.id,
+            "start_time": "10:00",
+            "end_time": "11:30",
+            "reason": "Jammed",
+        }
+        response = self.client.post(reverse("production:downtime-entry"), data)
+        self.assertEqual(response.status_code, 302)  # Redirects to list
+        self.assertEqual(MachineDowntime.objects.count(), 1)
+        dt = MachineDowntime.objects.first()
+        self.assertEqual(dt.duration_minutes, 90)
+
+    def test_downtime_list_view(self):
+        MachineDowntime.objects.create(
+            machine=self.machine,
+            downtime_date=self.today,
+            start_time=time(10, 0),
+            end_time=time(11, 30),
+            logged_by=self.user,
+        )
+        response = self.client.get(reverse("production:downtime-list"))
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b"Packer 1", response.content)

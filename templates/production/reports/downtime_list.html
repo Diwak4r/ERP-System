@@ -1,0 +1,88 @@
+<!DOCTYPE html>\n<html>\n<head>\n    <title>Downtime List</title>\n    <script src="https://cdn.tailwindcss.com"></script>\n</head>\n<body class="bg-gray-100 p-8">
+
+
+
+
+
+
+
+
+<div class="mb-6 flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+    <h1 class="text-2xl font-bold text-gray-800">Machine Downtime Report</h1>
+
+    <form method="get" class="flex gap-4 items-end bg-white p-3 rounded shadow-sm">
+        <div>
+            <label class="block text-xs font-medium text-gray-500 mb-1">Date</label>
+            <input type="date" name="date" value="{{ report_date|date:'Y-m-d' }}"
+                   class="border rounded px-2 py-1 text-sm focus:ring-blue-500 focus:border-blue-500"
+                   onchange="this.form.submit()">
+        </div>
+        <div>
+            <label class="block text-xs font-medium text-gray-500 mb-1">Section</label>
+            <select name="section" class="border rounded px-2 py-1 text-sm focus:ring-blue-500 focus:border-blue-500" onchange="this.form.submit()">
+                <option value="">All My Sections</option>
+                {% for sec in sections %}
+                <option value="{{ sec.id }}" {% if selected_section.id == sec.id %}selected{% endif %}>
+                    {{ sec.name }}
+                </option>
+                {% endfor %}
+            </select>
+        </div>
+    </form>
+</div>
+
+<div class="bg-white rounded-lg shadow overflow-hidden">
+    <table class="min-w-full divide-y divide-gray-200">
+        <thead class="bg-gray-50">
+            <tr>
+                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Machine</th>
+                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Section</th>
+                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Start</th>
+                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">End</th>
+                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Duration (min)</th>
+                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Reason</th>
+            </tr>
+        </thead>
+        <tbody class="bg-white divide-y divide-gray-200">
+            {% for machine in machines %}
+            <tr class="{% if machine.id in down_machine_ids %}bg-red-50 hover:bg-red-100{% else %}hover:bg-gray-50{% endif %}">
+                <td class="px-6 py-4 whitespace-nowrap font-medium {% if machine.id in down_machine_ids %}text-red-700{% else %}text-gray-900{% endif %}">
+                    {{ machine.name }} ({{ machine.machine_code }})
+                </td>
+                <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                    {{ machine.section.name }}
+                </td>
+                <td colspan="4" class="px-0 py-0">
+                    <!-- Nested table for downtimes if any -->
+                    {% for dt in downtimes %}
+                        {% if dt.machine_id == machine.id %}
+                        <div class="grid grid-cols-4 gap-4 px-6 py-2 border-b last:border-b-0 border-red-200">
+                            <div class="text-sm text-gray-900">{{ dt.start_time|time:"H:i" }}</div>
+                            <div class="text-sm text-gray-900">{{ dt.end_time|time:"H:i"|default:"Ongoing" }}</div>
+                            <div class="text-sm text-gray-900">{{ dt.duration_minutes }}</div>
+                            <div class="text-sm text-gray-500 truncate" title="{{ dt.reason }}">{{ dt.reason|default:"-" }}</div>
+                        </div>
+                        {% endif %}
+                    {% empty %}
+                        <div class="px-6 py-4 text-sm text-gray-400">No downtime</div>
+                    {% endfor %}
+                </td>
+            </tr>
+            {% empty %}
+            <tr>
+                <td colspan="6" class="px-6 py-4 text-center text-sm text-gray-500">
+                    No machines found.
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+
+<div class="mt-6 flex justify-end">
+    <a href="{% url 'production:downtime-entry' %}" class="bg-green-600 hover:bg-green-700 text-white font-bold py-2 px-4 rounded shadow">
+        + Log New Downtime
+    </a>
+</div>
+
+</body>\n</html>

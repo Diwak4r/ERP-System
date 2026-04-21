@@ -4,6 +4,8 @@ from django.contrib import admin
 from django.core.serializers.json import DjangoJSONEncoder
 
 from .models import (
+    Machine,
+    MachineDowntime,
     AttendanceLine,
     AttendanceSheet,
     AuditEvent,
@@ -182,3 +184,30 @@ class AttendanceSheetAdmin(admin.ModelAdmin):
     search_fields = ("section__name", "lines__worker__name", "lines__worker__employee_code")
     readonly_fields = ("created_at", "updated_at", "created_by")
     inlines = (AttendanceLineInline,)
+
+@admin.register(Machine)
+class MachineAdmin(admin.ModelAdmin):
+    list_display = ("name", "machine_code", "section", "is_active")
+    list_filter = ("section", "is_active")
+    search_fields = ("name", "machine_code", "section__name")
+
+@admin.register(MachineDowntime)
+class MachineDowntimeAdmin(admin.ModelAdmin):
+    list_display = ("machine", "downtime_date", "start_time", "end_time", "duration_minutes", "logged_by")
+    list_filter = ("downtime_date", "machine__section", "machine")
+    search_fields = ("machine__name", "reason")
+    readonly_fields = ("duration_minutes", "created_at")
+
+    def save_model(self, request, obj, form, change):
+        before_data = None
+        if change:
+            old_obj = MachineDowntime.objects.get(pk=obj.pk)
+            before_data = _serialize_model(old_obj)
+        super().save_model(request, obj, form, change)
+        action = "UPDATE" if change else "CREATE"
+        _log_audit_event(request, obj, action, before_data)
+
+    def delete_model(self, request, obj):
+        before_data = _serialize_model(obj)
+        super().delete_model(request, obj)
+        _log_audit_event(request, obj, "DELETE", before_data)

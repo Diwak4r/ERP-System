@@ -386,3 +386,85 @@ class DailyLedger(models.Model):
         if available <= Decimal("0.00"):
             return Decimal("0.00")
         return ((self.waste_qty / available) * Decimal("100.00")).quantize(Decimal("0.01"))
+
+class Machine(models.Model):
+    section = models.ForeignKey(Section, on_delete=models.CASCADE)
+    name = models.CharField(max_length=255)
+    machine_code = models.CharField(max_length=50, unique=True)
+    is_active = models.BooleanField(default=True)
+
+    class Meta:
+        ordering = ["section__name", "name"]
+
+    def __str__(self) -> str:
+        return f"{self.name} ({self.machine_code})"
+
+
+class MachineDowntime(models.Model):
+    machine = models.ForeignKey(Machine, on_delete=models.CASCADE)
+    downtime_date = models.DateField()
+    start_time = models.TimeField()
+    end_time = models.TimeField(null=True, blank=True)
+    duration_minutes = models.IntegerField(default=0)
+    reason = models.TextField(blank=True, default="")
+    logged_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name="downtime_entries")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-downtime_date", "machine__name", "start_time"]
+        indexes = [
+            models.Index(fields=["downtime_date", "machine"]),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.machine} down on {self.downtime_date}"
+
+    def clean(self) -> None:
+        from datetime import datetime
+
+        if self.pk is None and self.downtime_date and self.downtime_date < date.today():
+            raise ValidationError("Cannot create backdated downtime entries.")
+
+        if getattr(self, "machine", None) and getattr(self, "downtime_date", None):
+            lock = DayLock.objects.filter(section=self.machine.section, lock_date=self.downtime_date, is_locked=True).first()
+            if lock:
+                raise ValidationError(f"Section {self.machine.section.name} is locked for {self.downtime_date}.")
+
+            # Overlap prevention
+            qs = MachineDowntime.objects.filter(machine=self.machine, downtime_date=self.downtime_date)
+            if self.pk:
+                qs = qs.exclude(pk=self.pk)
+
+            for dt in qs:
+                # If there's an ongoing downtime and we try to add another, or
+                # dt has end_time and overlaps with ours
+                if dt.end_time is None:
+                    # An ongoing downtime exists. If ours starts after its start, it overlaps
+                    if self.start_time >= dt.start_time:
+                         raise ValidationError(f"Overlaps with ongoing downtime starting at {dt.start_time}.")
+                else:
+                    my_end = self.end_time
+                    if my_end is None:
+                        # My end is open. If my start is before their end, it overlaps
+                        if self.start_time < dt.end_time:
+                            raise ValidationError(f"Overlaps with downtime from {dt.start_time} to {dt.end_time}.")
+                    else:
+                        # Both have ends. max(start1, start2) < min(end1, end2)
+                        max_start = max(self.start_time, dt.start_time)
+                        min_end = min(self.end_time, dt.end_time)
+                        if max_start < min_end:
+                            raise ValidationError(f"Overlaps with downtime from {dt.start_time} to {dt.end_time}.")
+
+        # Compute duration_minutes
+        if self.start_time and self.end_time:
+            if self.end_time < self.start_time:
+                raise ValidationError("End time cannot be before start time on the same day.")
+            dt1 = datetime.combine(date.min, self.start_time)
+            dt2 = datetime.combine(date.min, self.end_time)
+            self.duration_minutes = int((dt2 - dt1).total_seconds() / 60)
+        else:
+            self.duration_minutes = 0
+
+    def save(self, *args, **kwargs):
+        self.clean()
+        super().save(*args, **kwargs)
