@@ -74,7 +74,7 @@ Duration: 1-2 weeks | Priority: CRITICAL
 Duration: 2-3 weeks | Priority: CRITICAL
 
 #### Prompt 1A: Production Entry Module (Supervisor Form UI)
-- **Status:** ⏳ Pending
+- **Status:** ✅ COMPLETED (merged to main)
 - **Core Feature:** Worker production entry with auto-computed targets and overtime
 - **Deliverables:**
   - ProductionEntry model with fields:
@@ -90,7 +90,7 @@ Duration: 2-3 weeks | Priority: CRITICAL
   - Tests for overtime calc, snapshots, permissions
 
 #### Prompt 1B: Aggregated Reports
-- **Status:** ⏳ Pending
+- **Status:** ✅ COMPLETED (merged to main — PR #44)
 - **Reports:**
   1. Daily Section Summary
      - Total actual per item
@@ -110,7 +110,7 @@ Duration: 2-3 weeks | Priority: CRITICAL
   - Tests with factory data
 
 #### Prompt 1C: No-Backdate Edits + Audit Logging (MANDATORY)
-- **Status:** ⏳ Pending
+- **Status:** ✅ COMPLETED (merged to main — PR #48)
 - **Core Rules:**
   - Supervisors cannot edit/delete entries after cutoff
   - DayLock: section + lock_date with is_locked boolean
@@ -128,7 +128,7 @@ Duration: 2-3 weeks | Priority: CRITICAL
 Duration: 2 weeks | Priority: CRITICAL
 
 #### Prompt 2A: Inventory/Process Ledger
-- **Status:** ⏳ Pending
+- **Status:** ✅ COMPLETED (merged to main — PR #48)
 - **Core Concept:** 
   - Daily balances per (date, section, item)
   - opening_balance + received_from_prev + manual_received - output - waste = closing_balance
@@ -142,7 +142,7 @@ Duration: 2 weeks | Priority: CRITICAL
   - Tests for flow validation
 
 #### Prompt 2B: Wastage Capture + Reporting
-- **Status:** ⏳ Pending
+- **Status:** ✅ COMPLETED (merged to main — PR #51)
 - **Deliverables:**
   - Waste entry form (supervisor, locked by DayLock)
   - Waste % = waste_qty / total_available
@@ -153,7 +153,7 @@ Duration: 2 weeks | Priority: CRITICAL
 Duration: 1 week | Priority: SECONDARY
 
 #### Prompt 3A: Attendance Entry + Report
-- **Status:** ⏳ Pending
+- **Status:** ✅ COMPLETED (merged to main — PR #55)
 - **Deliverables:**
   - AttendanceSheet + AttendanceLine models
   - Daily supervisor entry (multi-select workers)
