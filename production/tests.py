@@ -10,7 +10,7 @@ from django.contrib.admin.sites import AdminSite
 from django.urls import reverse
 
 from .admin import ProductionEntryAdmin
-from .models import AuditEvent, DailyLedger, DayLock, Item, ProcessFlowEdge, ProductionEntry, Section, TargetRule, WasteEntry, Worker
+from .models import AttendanceLine, AttendanceSheet, AuditEvent, DailyLedger, DayLock, Item, ProcessFlowEdge, ProductionEntry, Section, TargetRule, WasteEntry, Worker
 
 pytestmark = pytest.mark.django_db
 
@@ -307,3 +307,89 @@ def test_wastage_report_shows_percentage(admin_user, section, item, client):
     response = client.get(reverse("production:report-wastage"))
     assert response.status_code == 200
     assert response.context["rows"][0]["waste_percentage"] == Decimal("10.00")
+
+
+def test_attendance_entry_saves_present_workers(supervisor_user, section, worker, client):
+    worker_2 = Worker.objects.create(name="Jane", employee_code="W002")
+
+    client.force_login(supervisor_user)
+    response = client.post(
+        reverse("production:attendance-entry"),
+        data={
+            "attendance_date": date.today().isoformat(),
+            "section": section.id,
+            "workers": [worker.id, worker_2.id],
+        },
+        follow=True,
+    )
+
+    assert response.status_code == 200
+    sheet = AttendanceSheet.objects.get(attendance_date=date.today(), section=section)
+    assert sheet.created_by == supervisor_user
+    assert AttendanceLine.objects.filter(sheet=sheet).count() == 2
+
+
+def test_attendance_entry_permission_enforced(supervisor_user, worker, client):
+    my_section = Section.objects.create(name="Cutting Attendance", code="CUT-AT")
+    my_section.supervisors.add(supervisor_user)
+    other_section = Section.objects.create(name="Packing Attendance", code="PCK-AT")
+
+    client.force_login(supervisor_user)
+    response = client.post(
+        reverse("production:attendance-entry"),
+        data={
+            "attendance_date": date.today().isoformat(),
+            "section": other_section.id,
+            "workers": [worker.id],
+        },
+    )
+
+    assert response.status_code == 403
+    assert AttendanceSheet.objects.count() == 0
+
+
+def test_attendance_entry_daylock_prevents_save(admin_user, section, worker, client):
+    today = date.today()
+    DayLock.objects.create(section=section, lock_date=today, is_locked=True)
+
+    client.force_login(admin_user)
+    response = client.post(
+        reverse("production:attendance-entry"),
+        data={
+            "attendance_date": today.isoformat(),
+            "section": section.id,
+            "workers": [worker.id],
+        },
+    )
+
+    assert response.status_code == 200
+    assert AttendanceSheet.objects.count() == 0
+    assert b"is locked" in response.content
+
+
+def test_attendance_sheet_backdate_validation(admin_user, section):
+    sheet = AttendanceSheet(
+        attendance_date=date.today() - timedelta(days=1),
+        section=section,
+        created_by=admin_user,
+    )
+    with pytest.raises(ValidationError, match="Cannot create backdated attendance sheets."):
+        sheet.clean()
+
+
+def test_attendance_report_shows_daily_and_trend_data(admin_user, section, worker, client):
+    worker_2 = Worker.objects.create(name="Ajay", employee_code="W003")
+    sheet = AttendanceSheet.objects.create(
+        attendance_date=date.today(),
+        section=section,
+        created_by=admin_user,
+    )
+    AttendanceLine.objects.create(sheet=sheet, worker=worker, status=AttendanceLine.STATUS_PRESENT)
+    AttendanceLine.objects.create(sheet=sheet, worker=worker_2, status=AttendanceLine.STATUS_PRESENT)
+
+    client.force_login(admin_user)
+    response = client.get(reverse("production:report-attendance"), {"date": date.today().isoformat(), "section": section.id})
+
+    assert response.status_code == 200
+    assert response.context["daily_rows"][0]["present_count"] == 2
+    assert list(response.context["trend_rows"])[0]["present_count"] == 2

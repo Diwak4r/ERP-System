@@ -251,6 +251,65 @@ class WasteEntry(models.Model):
             ledger.save(update_fields=["waste_qty"])
 
 
+class AttendanceSheet(models.Model):
+    attendance_date = models.DateField()
+    section = models.ForeignKey(Section, on_delete=models.PROTECT)
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.PROTECT,
+        related_name="attendance_sheets",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-attendance_date", "section__name"]
+        unique_together = ("attendance_date", "section")
+        indexes = [
+            models.Index(fields=["attendance_date", "section"]),
+        ]
+
+    def __str__(self) -> str:  # pragma: no cover - repr helper
+        return f"{self.attendance_date} - {self.section}"
+
+    def clean(self) -> None:
+        if self.pk is None and self.attendance_date and self.attendance_date < date.today():
+            raise ValidationError("Cannot create backdated attendance sheets.")
+
+        if getattr(self, "section", None) and getattr(self, "attendance_date", None):
+            lock = DayLock.objects.filter(section=self.section, lock_date=self.attendance_date, is_locked=True).first()
+            if lock:
+                raise ValidationError(f"Section {self.section.name} is locked for {self.attendance_date}.")
+
+    @property
+    def present_count(self) -> int:
+        return self.lines.filter(status=AttendanceLine.STATUS_PRESENT).count()
+
+
+class AttendanceLine(models.Model):
+    STATUS_PRESENT = "PRESENT"
+    STATUS_ABSENT = "ABSENT"
+    STATUS_CHOICES = [
+        (STATUS_PRESENT, "Present"),
+        (STATUS_ABSENT, "Absent"),
+    ]
+
+    sheet = models.ForeignKey(AttendanceSheet, on_delete=models.CASCADE, related_name="lines")
+    worker = models.ForeignKey(Worker, on_delete=models.PROTECT)
+    status = models.CharField(max_length=10, choices=STATUS_CHOICES, default=STATUS_PRESENT)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["worker__name"]
+        unique_together = ("sheet", "worker")
+        indexes = [
+            models.Index(fields=["sheet", "status"]),
+        ]
+
+    def __str__(self) -> str:  # pragma: no cover - repr helper
+        return f"{self.sheet} - {self.worker} ({self.status})"
+
+
 class DayLock(models.Model):
     section = models.ForeignKey(Section, on_delete=models.CASCADE)
     lock_date = models.DateField()
