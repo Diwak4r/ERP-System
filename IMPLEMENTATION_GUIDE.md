@@ -166,7 +166,7 @@ Duration: 1 week | Priority: SECONDARY
 Duration: 1 week | Priority: SECONDARY
 
 #### Prompt 4A: Downtime Logging + Red Machine Alert
-- **Status:** ⏳ Pending
+- **Status:** ✅ COMPLETED (merged to main — PR #57)
 - **Deliverables:**
   - MachineDowntime model (machine, downtime_date, start/end times, reason, duration_minutes)
   - Supervisor logging

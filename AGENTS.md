@@ -51,41 +51,55 @@ The following phases are merged to `main`. Skip them entirely:
 - Phase 2A: Inventory/Process Ledger ✅ (PR #48)
 - Phase 2B: Wastage Capture ✅ (PR #51)
 - Phase 3A: Attendance Module ✅ (PR #55)
+- Phase 4A: Machine Downtime Logging ✅ (PR #57)
 
-## 🎯 CURRENT TASK: Phase 4A — Machine Downtime Logging
+## 🎯 CURRENT TASK: Phase 5A — Store Requisition Workflow
 
-Implement the Machine Downtime module per `IMPLEMENTATION_GUIDE.md § Phase 4A`.
+Implement the Store Requisition module per `IMPLEMENTATION_GUIDE.md § Phase 5A`.
 
-### Model: `MachineDowntime`
+### Model: `Requisition`
 ```python
 # Required fields:
-machine          # FK → Machine (section-scoped)
-downtime_date    # DateField
-start_time       # TimeField
-end_time         # TimeField (nullable, for ongoing)
-duration_minutes # IntegerField, auto-computed on save
-reason           # TextField
-logged_by        # FK → User (supervisor who entered)
+item             # FK → Item
+requested_qty    # DecimalField
+note             # TextField (optional)
+status           # CharField choices: PENDING / APPROVED / REJECTED
+requested_by     # FK → User (store user)
+reviewed_by      # FK → User (admin), nullable
+reviewed_at      # DateTimeField, nullable
 created_at       # auto_now_add
 ```
 
+### StatusHistory Model (optional but preferred)
+```python
+# Track every status transition:
+requisition      # FK → Requisition
+from_status      # CharField
+to_status        # CharField
+changed_by       # FK → User
+note             # TextField
+changed_at       # auto_now_add
+```
+
 ### Business Rules
-1. **DayLock applies** — supervisors cannot log downtime for a locked day.
-2. **Overlap prevention** — two entries for same machine on same day cannot overlap in time.
-3. **Dashboard alert** — machines with downtime today must show a red alert on the dashboard.
-4. **RBAC** — supervisors log for their section's machines only; admins see all.
-5. `duration_minutes` must auto-compute from `start_time` and `end_time` on `clean()`/`save()`.
+1. **RBAC** — only `STORE` group users can create requisitions; only `ADMIN` can approve/reject.
+2. **Status flow**: `PENDING → APPROVED` or `PENDING → REJECTED` (no going back).
+3. **Real-time notification**: when a new requisition is submitted, the dashboard must show an alert/badge count visible to ADMIN users.
+4. Approved requisitions update the `DailyLedger.manual_received` for the requested item/section/date.
+5. Rejected requisitions must record a rejection reason.
 
 ### Required Deliverables
-- [ ] `MachineDowntime` model with migration
-- [ ] `MachineDowntimeForm` with machine dropdown scoped to supervisor's section
-- [ ] View: `downtime_entry` (POST, supervisor only, locked by DayLock)
-- [ ] View: `downtime_list` (GET, filters by date and section)
-- [ ] Template: `production/downtime_entry_form.html`
-- [ ] Template: `production/reports/downtime_list.html`
-- [ ] Admin registration (MachineDowntime with inline view)
-- [ ] URL patterns registered in `production/urls.py`
-- [ ] Unit tests: overlap prevention, DayLock block, duration calculation, RBAC
+- [ ] `Requisition` model with migration
+- [ ] `StatusHistory` model (inline to Requisition)
+- [ ] `RequisitionForm` (store user: item + qty + note)
+- [ ] View: `requisition_create` (POST, STORE only)
+- [ ] View: `requisition_list` (GET, STORE sees own; ADMIN sees all, with PENDING badge count)
+- [ ] View: `requisition_detail` (GET + POST approval/rejection, ADMIN only)
+- [ ] Templates: `production/requisition_form.html`, `production/requisition_list.html`, `production/requisition_detail.html`
+- [ ] Admin registration with StatusHistory inline
+- [ ] URL patterns in `production/urls.py`
+- [ ] Dashboard badge: unread PENDING count shown in navbar for ADMIN
+- [ ] Unit tests: RBAC, status transition, ledger update on approval, rejection reason required
 
 ### Verification Commands
 ```bash
@@ -95,9 +109,9 @@ docker compose exec web ruff check .
 ```
 
 ### Delivery
-- Create a new branch: `feat/phase-4a-machine-downtime`
+- Create a new branch: `feat/phase-5a-store-requisition`
 - Open a PR targeting `main` — do NOT push directly to main
-- PR title: `feat: Phase 4A — Machine Downtime Logging`
+- PR title: `feat: Phase 5A — Store Requisition Workflow`
 
 ---
 
