@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Machine Downtime Entry</title>
+</head>
+<body>
+    <h1>Machine Downtime Entry</h1>
+    <form method="post">
+        {% csrf_token %}
+        {% if form.non_field_errors %}
+            <div style="color: red;">
+                {% for error in form.non_field_errors %}
+                    <p>{{ error }}</p>
+                {% endfor %}
+            </div>
+        {% endif %}
+
+        <p>
+            <label for="{{ form.section.id_for_label }}">Section:</label>
+            {{ form.section }}
+        </p>
+        <p>
+            <label for="{{ form.machine.id_for_label }}">Machine:</label>
+            {{ form.machine }}
+            {% for error in form.machine.errors %}
+                <span style="color: red;">{{ error }}</span>
+            {% endfor %}
+        </p>
+        <p>
+            <label for="{{ form.downtime_date.id_for_label }}">Date:</label>
+            {{ form.downtime_date }}
+        </p>
+        <p>
+            <label for="{{ form.start_time.id_for_label }}">Start Time:</label>
+            {{ form.start_time }}
+        </p>
+        <p>
+            <label for="{{ form.end_time.id_for_label }}">End Time:</label>
+            {{ form.end_time }}
+        </p>
+        <p>
+            <label for="{{ form.reason.id_for_label }}">Reason:</label>
+            {{ form.reason }}
+        </p>
+
+        <button type="submit">Save Downtime</button>
+    </form>
+</body>
+</html>
