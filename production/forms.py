@@ -5,7 +5,7 @@ from typing import Optional
 
 from django import forms
 
-from .models import AttendanceSheet, Item, ProductionEntry, Section, TargetRule, WasteEntry, Worker
+from .models import AttendanceSheet, Item, MachineDowntime, Machine, ProductionEntry, Section, TargetRule, WasteEntry, Worker
 
 
 from django.core.exceptions import ValidationError
@@ -235,6 +235,71 @@ class AttendanceEntryForm(forms.Form):
             )
             try:
                 sheet.clean()
+            except ValidationError as exc:
+                for message in exc.messages:
+                    self.add_error(None, message)
+        return cleaned
+
+
+class MachineDowntimeForm(forms.ModelForm):
+    section = forms.ModelChoiceField(queryset=Section.objects.none(), required=True)
+
+    def __init__(
+        self,
+        *args,
+        sections=None,
+        user=None,
+        **kwargs,
+    ):
+        super().__init__(*args, **kwargs)
+        section_qs = sections if sections is not None else Section.objects.none()
+        self.fields["section"].queryset = section_qs
+        self.fields["section"].widget.attrs.update({"id": "id_section"})
+        self.user = user
+        self.fields["machine"].queryset = Machine.objects.filter(is_active=True)
+
+        selected_section_id = self.data.get("section") or self.initial.get("section")
+        if selected_section_id:
+            self.fields["machine"].queryset = self.fields["machine"].queryset.filter(section_id=selected_section_id)
+        elif sections is not None:
+            self.fields["machine"].queryset = self.fields["machine"].queryset.filter(section__in=section_qs)
+
+    class Meta:
+        model = MachineDowntime
+        fields = ["section", "machine", "downtime_date", "start_time", "end_time", "reason"]
+        widgets = {
+            "downtime_date": forms.DateInput(attrs={"type": "date"}),
+            "start_time": forms.TimeInput(attrs={"type": "time"}),
+            "end_time": forms.TimeInput(attrs={"type": "time"}),
+            "reason": forms.Textarea(attrs={"rows": 3}),
+        }
+
+    def clean(self):
+        cleaned = super().clean()
+        section = cleaned.get("section")
+        machine = cleaned.get("machine")
+        downtime_date = cleaned.get("downtime_date")
+        start_time = cleaned.get("start_time")
+        end_time = cleaned.get("end_time")
+        reason = cleaned.get("reason")
+
+        if machine and section and machine.section_id != section.id:
+            self.add_error("machine", "Selected machine does not belong to this section.")
+            return cleaned
+
+        if not self.errors and machine and downtime_date and start_time and self.user:
+            entry = MachineDowntime(
+                machine=machine,
+                downtime_date=downtime_date,
+                start_time=start_time,
+                end_time=end_time,
+                reason=reason or "",
+                logged_by=self.user,
+            )
+            if self.instance.pk:
+                entry.pk = self.instance.pk
+            try:
+                entry.clean()
             except ValidationError as exc:
                 for message in exc.messages:
                     self.add_error(None, message)

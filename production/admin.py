@@ -10,6 +10,8 @@ from .models import (
     DailyLedger,
     DayLock,
     Item,
+    Machine,
+    MachineDowntime,
     ProcessFlowEdge,
     ProductionEntry,
     Section,
@@ -65,6 +67,36 @@ class ItemAdmin(admin.ModelAdmin):
     list_display = ("name", "sku", "unit", "is_active")
     search_fields = ("name", "sku")
     list_filter = ("unit", "is_active")
+
+
+class MachineDowntimeInline(admin.TabularInline):
+    model = MachineDowntime
+    extra = 0
+    readonly_fields = ("created_at", "duration_minutes", "logged_by")
+
+
+@admin.register(Machine)
+class MachineAdmin(admin.ModelAdmin):
+    list_display = ("name", "machine_code", "section", "is_active")
+    list_filter = ("section", "is_active")
+    search_fields = ("name", "machine_code", "section__name")
+    inlines = (MachineDowntimeInline,)
+
+
+@admin.register(MachineDowntime)
+class MachineDowntimeAdmin(admin.ModelAdmin):
+    list_display = (
+        "downtime_date",
+        "machine",
+        "start_time",
+        "end_time",
+        "duration_minutes",
+        "logged_by",
+        "created_at",
+    )
+    list_filter = ("downtime_date", "machine__section")
+    search_fields = ("machine__name", "machine__machine_code", "reason")
+    readonly_fields = ("duration_minutes", "created_at", "logged_by")
 
 
 @admin.register(TargetRule)

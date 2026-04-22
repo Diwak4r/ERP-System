@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Machine Downtime Report</title>
+</head>
+<body>
+    <h1>Machine Downtime Report</h1>
+
+    <form method="get">
+        <label for="date">Date:</label>
+        <input id="date" name="date" type="date" value="{{ report_date|date:'Y-m-d' }}">
+
+        <label for="section">Section:</label>
+        <select id="section" name="section">
+            <option value="">All</option>
+            {% for section in sections %}
+                <option value="{{ section.id }}" {% if selected_section and section.id == selected_section.id %}selected{% endif %}>
+                    {{ section.name }}
+                </option>
+            {% endfor %}
+        </select>
+
+        <button type="submit">Filter</button>
+    </form>
+
+    <table border="1" width="100%">
+        <thead>
+            <tr>
+                <th>Section</th>
+                <th>Machine</th>
+                <th>Code</th>
+                <th>Date</th>
+                <th>Start</th>
+                <th>End</th>
+                <th>Duration (min)</th>
+                <th>Reason</th>
+                <th>Logged By</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for row in rows %}
+                <tr {% if row.duration_minutes > 0 %}style="background-color: #f8d7da;"{% endif %}>
+                    <td>{{ row.machine.section.name }}</td>
+                    <td>{{ row.machine.name }}</td>
+                    <td>{{ row.machine.machine_code }}</td>
+                    <td>{{ row.downtime_date }}</td>
+                    <td>{{ row.start_time }}</td>
+                    <td>{{ row.end_time|default:"Ongoing" }}</td>
+                    <td>{{ row.duration_minutes }}</td>
+                    <td>{{ row.reason }}</td>
+                    <td>{{ row.logged_by }}</td>
+                </tr>
+            {% empty %}
+                <tr>
+                    <td colspan="9">No downtime records found for selected filters.</td>
+                </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</body>
+</html>

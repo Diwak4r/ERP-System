@@ -6,6 +6,7 @@
     <style>
         .target-hit { background-color: #d4edda; } /* Green */
         .target-missed { background-color: #f8d7da; } /* Red */
+        .downtime-alert { background-color: #f8d7da; color: #721c24; }
 
         /* Modal styles */
         .modal {
@@ -59,6 +60,34 @@
 
     <h2>Summary for {{ selected_section.name }} on {{ entry_date }}</h2>
     <p>Total Workers: {{ worker_count }}</p>
+
+    {% if is_today_view %}
+        <h3>Machine Downtime Alerts (Today)</h3>
+        <table border="1">
+            <thead>
+                <tr>
+                    <th>Section</th>
+                    <th>Machine</th>
+                    <th>Code</th>
+                    <th>Total Downtime (min)</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for alert in today_downtime_alerts %}
+                    <tr class="downtime-alert">
+                        <td>{{ alert.machine__section__name }}</td>
+                        <td>{{ alert.machine__name }}</td>
+                        <td>{{ alert.machine__machine_code }}</td>
+                        <td>{{ alert.total_minutes }}</td>
+                    </tr>
+                {% empty %}
+                    <tr>
+                        <td colspan="4">No downtime logged today.</td>
+                    </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    {% endif %}
 
     <h3>Item Summary</h3>
     <table border="1">

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime, time
 from decimal import Decimal
 
 from django.conf import settings
@@ -57,6 +57,19 @@ class Item(models.Model):
 
     def __str__(self) -> str:  # pragma: no cover - repr helper
         return f"{self.name} ({self.sku})"
+
+
+class Machine(models.Model):
+    section = models.ForeignKey(Section, on_delete=models.CASCADE, related_name="machines")
+    name = models.CharField(max_length=255)
+    machine_code = models.CharField(max_length=50, unique=True)
+    is_active = models.BooleanField(default=True)
+
+    class Meta:
+        ordering = ["section__name", "name"]
+
+    def __str__(self) -> str:  # pragma: no cover - repr helper
+        return f"{self.name} ({self.machine_code})"
 
 
 class TargetRuleQuerySet(models.QuerySet):
@@ -308,6 +321,84 @@ class AttendanceLine(models.Model):
 
     def __str__(self) -> str:  # pragma: no cover - repr helper
         return f"{self.sheet} - {self.worker} ({self.status})"
+
+
+class MachineDowntime(models.Model):
+    machine = models.ForeignKey(Machine, on_delete=models.PROTECT, related_name="downtimes")
+    downtime_date = models.DateField()
+    start_time = models.TimeField()
+    end_time = models.TimeField(null=True, blank=True)
+    duration_minutes = models.IntegerField(default=0)
+    reason = models.TextField()
+    logged_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.PROTECT,
+        related_name="machine_downtimes",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-downtime_date", "machine__name", "-start_time"]
+        indexes = [
+            models.Index(fields=["downtime_date", "machine"]),
+        ]
+
+    def __str__(self) -> str:  # pragma: no cover - repr helper
+        return f"{self.machine} on {self.downtime_date} ({self.start_time}-{self.end_time or 'ongoing'})"
+
+    @staticmethod
+    def _duration_in_minutes(start_time: time, end_time: time | None, downtime_date: date) -> int:
+        if not end_time:
+            return 0
+        start_dt = datetime.combine(downtime_date, start_time)
+        end_dt = datetime.combine(downtime_date, end_time)
+        return int((end_dt - start_dt).total_seconds() // 60)
+
+    def _effective_end(self) -> time:
+        return self.end_time or time.max
+
+    def clean(self) -> None:
+        if self.end_time and self.end_time <= self.start_time:
+            raise ValidationError("End time must be later than start time.")
+
+        if getattr(self, "machine", None) and getattr(self, "downtime_date", None):
+            lock = DayLock.objects.filter(
+                section=self.machine.section,
+                lock_date=self.downtime_date,
+                is_locked=True,
+            ).first()
+            if lock:
+                raise ValidationError(f"Section {self.machine.section.name} is locked for {self.downtime_date}.")
+
+        if getattr(self, "machine", None) and getattr(self, "downtime_date", None) and getattr(self, "start_time", None):
+            overlapping_entries = MachineDowntime.objects.filter(
+                machine=self.machine,
+                downtime_date=self.downtime_date,
+            )
+            if self.pk:
+                overlapping_entries = overlapping_entries.exclude(pk=self.pk)
+
+            current_end = self._effective_end()
+            for entry in overlapping_entries:
+                entry_end = entry._effective_end()
+                if self.start_time < entry_end and entry.start_time < current_end:
+                    raise ValidationError("Downtime window overlaps an existing entry for this machine.")
+
+        if getattr(self, "downtime_date", None) and getattr(self, "start_time", None):
+            self.duration_minutes = self._duration_in_minutes(
+                self.start_time,
+                self.end_time,
+                self.downtime_date,
+            )
+
+    def save(self, *args, **kwargs):
+        if self.downtime_date and self.start_time:
+            self.duration_minutes = self._duration_in_minutes(
+                self.start_time,
+                self.end_time,
+                self.downtime_date,
+            )
+        super().save(*args, **kwargs)
 
 
 class DayLock(models.Model):

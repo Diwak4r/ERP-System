@@ -13,8 +13,26 @@ from django.db import transaction
 from django.db.models import Sum, F, ExpressionWrapper, FloatField, Case, When, Value, BooleanField, Count, Q
 from django.db.models.functions import Cast
 
-from .forms import AttendanceEntryForm, ProductionEntryForm, ProductionEntryFormSet, WasteEntryForm, WasteEntryFormSet
-from .models import AttendanceLine, AttendanceSheet, DailyLedger, Item, ProductionEntry, Section, TargetRule, WasteEntry, Worker
+from .forms import (
+    AttendanceEntryForm,
+    MachineDowntimeForm,
+    ProductionEntryForm,
+    ProductionEntryFormSet,
+    WasteEntryForm,
+    WasteEntryFormSet,
+)
+from .models import (
+    AttendanceLine,
+    AttendanceSheet,
+    DailyLedger,
+    Item,
+    MachineDowntime,
+    ProductionEntry,
+    Section,
+    TargetRule,
+    WasteEntry,
+    Worker,
+)
 
 ROLE_ADMIN = "ADMIN"
 ROLE_SUPERVISOR = "SUPERVISOR"
@@ -183,6 +201,19 @@ def daily_section_summary(request: HttpRequest) -> HttpResponse:
         ).order_by('worker__name')
 
     worker_count = entries.values('worker').distinct().count()
+    today = date.today()
+    downtime_alert_qs = (
+        MachineDowntime.objects.filter(downtime_date=today, machine__section__in=sections)
+        .select_related("machine", "machine__section")
+    )
+    if selected_section:
+        downtime_alert_qs = downtime_alert_qs.filter(machine__section=selected_section)
+
+    downtime_alerts = (
+        downtime_alert_qs.values("machine__name", "machine__machine_code", "machine__section__name")
+        .annotate(total_minutes=Sum("duration_minutes"))
+        .order_by("machine__section__name", "machine__name")
+    )
 
     context = {
         "sections": sections,
@@ -191,6 +222,8 @@ def daily_section_summary(request: HttpRequest) -> HttpResponse:
         "item_summary": item_summary,
         "worker_summary": worker_summary,
         "worker_count": worker_count,
+        "today_downtime_alerts": downtime_alerts,
+        "is_today_view": entry_date_val == today,
     }
     return render(request, "production/reports/daily_section_summary.html", context)
 
@@ -491,3 +524,64 @@ def wastage_report(request: HttpRequest) -> HttpResponse:
         "end_date": end_date_val,
     }
     return render(request, "production/reports/wastage_report.html", context)
+
+
+@login_required
+def downtime_entry(request: HttpRequest) -> HttpResponse:
+    if not _user_has_role(request.user, ROLE_SUPERVISOR):
+        return HttpResponseForbidden("Only supervisors can log machine downtime")
+
+    sections = _available_sections(request.user)
+    initial_section_id = request.GET.get("section") or (sections.first().id if sections else None)
+    initial_data = {
+        "downtime_date": date.today(),
+    }
+    if initial_section_id:
+        initial_data["section"] = initial_section_id
+
+    if request.method == "POST":
+        form = MachineDowntimeForm(request.POST, sections=sections, user=request.user)
+        section = form.data.get("section")
+        selected_section = Section.objects.filter(id=section).first() if section else None
+        if selected_section and not _ensure_permission(request.user, selected_section):
+            return HttpResponseForbidden("You are not allowed to log downtime for this section")
+
+        if form.is_valid():
+            entry = form.save(commit=False)
+            entry.logged_by = request.user
+            entry.save()
+            messages.success(request, "Machine downtime logged successfully.")
+            return redirect(
+                f"{reverse('production:downtime-list')}?date={entry.downtime_date.isoformat()}&section={entry.machine.section_id}"
+            )
+    else:
+        form = MachineDowntimeForm(initial=initial_data, sections=sections, user=request.user)
+
+    return render(request, "production/downtime_entry_form.html", {"form": form})
+
+
+@login_required
+def downtime_list(request: HttpRequest) -> HttpResponse:
+    sections = _available_sections(request.user)
+    report_date = _coerce_date(request.GET.get("date"), date.today())
+    section_id = request.GET.get("section")
+    selected_section = Section.objects.filter(id=section_id).first() if section_id else None
+
+    if selected_section and not _ensure_permission(request.user, selected_section):
+        return HttpResponseForbidden("Not allowed")
+
+    rows = MachineDowntime.objects.select_related("machine", "machine__section", "logged_by").filter(
+        downtime_date=report_date,
+        machine__section__in=sections,
+    )
+    if selected_section:
+        rows = rows.filter(machine__section=selected_section)
+    rows = rows.order_by("machine__section__name", "machine__name", "-start_time")
+
+    context = {
+        "rows": rows,
+        "report_date": report_date,
+        "sections": sections,
+        "selected_section": selected_section,
+    }
+    return render(request, "production/reports/downtime_list.html", context)

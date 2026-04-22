@@ -1,4 +1,4 @@
-from datetime import date, timedelta
+from datetime import date, time, timedelta
 from decimal import Decimal
 
 import pytest
@@ -10,7 +10,22 @@ from django.contrib.admin.sites import AdminSite
 from django.urls import reverse
 
 from .admin import ProductionEntryAdmin
-from .models import AttendanceLine, AttendanceSheet, AuditEvent, DailyLedger, DayLock, Item, ProcessFlowEdge, ProductionEntry, Section, TargetRule, WasteEntry, Worker
+from .models import (
+    AttendanceLine,
+    AttendanceSheet,
+    AuditEvent,
+    DailyLedger,
+    DayLock,
+    Item,
+    Machine,
+    MachineDowntime,
+    ProcessFlowEdge,
+    ProductionEntry,
+    Section,
+    TargetRule,
+    WasteEntry,
+    Worker,
+)
 
 pytestmark = pytest.mark.django_db
 
@@ -51,6 +66,11 @@ def item():
 @pytest.fixture
 def target_rule(section, item):
     return TargetRule.objects.create(section=section, item=item, target_qty=Decimal("100"), shift_hours=Decimal("8"), start_date=date.today())
+
+
+@pytest.fixture
+def machine(section):
+    return Machine.objects.create(section=section, name="Machine A", machine_code="MCH-001")
 
 
 def test_overtime_calculation():
@@ -393,3 +413,116 @@ def test_attendance_report_shows_daily_and_trend_data(admin_user, section, worke
     assert response.status_code == 200
     assert response.context["daily_rows"][0]["present_count"] == 2
     assert list(response.context["trend_rows"])[0]["present_count"] == 2
+
+
+def test_machine_downtime_duration_calculation(supervisor_user, machine):
+    entry = MachineDowntime(
+        machine=machine,
+        downtime_date=date.today(),
+        start_time=time(hour=9, minute=0),
+        end_time=time(hour=11, minute=30),
+        reason="Maintenance",
+        logged_by=supervisor_user,
+    )
+    entry.full_clean()
+    entry.save()
+    assert entry.duration_minutes == 150
+
+
+def test_machine_downtime_overlap_prevention(supervisor_user, machine):
+    MachineDowntime.objects.create(
+        machine=machine,
+        downtime_date=date.today(),
+        start_time=time(hour=9, minute=0),
+        end_time=time(hour=10, minute=0),
+        reason="Power cut",
+        logged_by=supervisor_user,
+    )
+
+    overlapping = MachineDowntime(
+        machine=machine,
+        downtime_date=date.today(),
+        start_time=time(hour=9, minute=30),
+        end_time=time(hour=10, minute=30),
+        reason="Belt issue",
+        logged_by=supervisor_user,
+    )
+    with pytest.raises(ValidationError, match="overlaps an existing entry"):
+        overlapping.full_clean()
+
+
+def test_machine_downtime_daylock_block(supervisor_user, section, machine, client):
+    today = date.today()
+    DayLock.objects.create(section=section, lock_date=today, is_locked=True)
+    client.force_login(supervisor_user)
+
+    response = client.post(
+        reverse("production:downtime-entry"),
+        data={
+            "section": section.id,
+            "machine": machine.id,
+            "downtime_date": today.isoformat(),
+            "start_time": "10:00",
+            "end_time": "11:00",
+            "reason": "Locked day test",
+        },
+    )
+
+    assert response.status_code == 200
+    assert MachineDowntime.objects.count() == 0
+    assert b"is locked" in response.content
+
+
+def test_machine_downtime_rbac(supervisor_user, section, machine, client):
+    other_section = Section.objects.create(name="Mixing", code="MIX")
+    other_machine = Machine.objects.create(section=other_section, name="Machine B", machine_code="MCH-002")
+    client.force_login(supervisor_user)
+
+    blocked = client.post(
+        reverse("production:downtime-entry"),
+        data={
+            "section": other_section.id,
+            "machine": other_machine.id,
+            "downtime_date": date.today().isoformat(),
+            "start_time": "12:00",
+            "end_time": "13:00",
+            "reason": "Unauthorized section",
+        },
+    )
+    assert blocked.status_code == 403
+
+    allowed = client.post(
+        reverse("production:downtime-entry"),
+        data={
+            "section": section.id,
+            "machine": machine.id,
+            "downtime_date": date.today().isoformat(),
+            "start_time": "13:00",
+            "end_time": "14:00",
+            "reason": "Authorized section",
+        },
+        follow=True,
+    )
+    assert allowed.status_code == 200
+    assert MachineDowntime.objects.count() == 1
+
+
+def test_downtime_list_and_dashboard_alert(admin_user, section, machine, client):
+    MachineDowntime.objects.create(
+        machine=machine,
+        downtime_date=date.today(),
+        start_time=time(hour=8, minute=0),
+        end_time=time(hour=9, minute=0),
+        reason="Calibration",
+        logged_by=admin_user,
+    )
+
+    client.force_login(admin_user)
+    report_response = client.get(reverse("production:downtime-list"), {"date": date.today().isoformat()})
+    assert report_response.status_code == 200
+    assert b"Machine Downtime Report" in report_response.content
+    assert b"Machine A" in report_response.content
+
+    dashboard_response = client.get(reverse("production:report-daily-section"), {"date": date.today().isoformat()})
+    assert dashboard_response.status_code == 200
+    assert b"Machine Downtime Alerts (Today)" in dashboard_response.content
