@@ -21,7 +21,9 @@ from .models import (
     MachineDowntime,
     ProcessFlowEdge,
     ProductionEntry,
+    Requisition,
     Section,
+    StatusHistory,
     TargetRule,
     WasteEntry,
     Worker,
@@ -42,6 +44,15 @@ def supervisor_user(db):
     User = get_user_model()
     user = User.objects.create_user(username="supervisor", password="pass")
     group, _ = Group.objects.get_or_create(name="SUPERVISOR")
+    user.groups.add(group)
+    return user
+
+
+@pytest.fixture
+def store_user(db):
+    User = get_user_model()
+    user = User.objects.create_user(username="store-user", password="pass")
+    group, _ = Group.objects.get_or_create(name="STORE")
     user.groups.add(group)
     return user
 
@@ -526,3 +537,161 @@ def test_downtime_list_and_dashboard_alert(admin_user, section, machine, client)
     dashboard_response = client.get(reverse("production:report-daily-section"), {"date": date.today().isoformat()})
     assert dashboard_response.status_code == 200
     assert b"Machine Downtime Alerts (Today)" in dashboard_response.content
+
+
+def test_requisition_create_rbac_and_store_submission(supervisor_user, store_user, section, item, client):
+    section.supervisors.add(store_user)
+
+    client.force_login(supervisor_user)
+    blocked = client.post(
+        reverse("production:requisition-create"),
+        data={"item": item.id, "requested_qty": "10.50", "note": "Need raw material"},
+    )
+    assert blocked.status_code == 403
+
+    client.force_login(store_user)
+    allowed = client.post(
+        reverse("production:requisition-create"),
+        data={"item": item.id, "requested_qty": "10.50", "note": "Need raw material"},
+        follow=True,
+    )
+    assert allowed.status_code == 200
+    req = Requisition.objects.get()
+    assert req.status == Requisition.STATUS_PENDING
+    assert req.requested_by == store_user
+    assert req.requested_section == section
+    assert StatusHistory.objects.filter(requisition=req, to_status=Requisition.STATUS_PENDING).exists()
+
+
+def test_requisition_list_scope_for_store_vs_admin(admin_user, store_user, section, item, client):
+    section.supervisors.add(store_user)
+    own = Requisition.objects.create(
+        item=item,
+        requested_qty=Decimal("8.00"),
+        note="Own req",
+        requested_by=store_user,
+        requested_section=section,
+    )
+    other_store = get_user_model().objects.create_user(username="store-other", password="pass")
+    store_group = Group.objects.get(name="STORE")
+    other_store.groups.add(store_group)
+    section.supervisors.add(other_store)
+    Requisition.objects.create(
+        item=item,
+        requested_qty=Decimal("12.00"),
+        note="Other req",
+        requested_by=other_store,
+        requested_section=section,
+    )
+
+    client.force_login(store_user)
+    store_response = client.get(reverse("production:requisition-list"))
+    assert store_response.status_code == 200
+    requisitions = list(store_response.context["requisitions"])
+    assert requisitions == [own]
+
+    client.force_login(admin_user)
+    admin_response = client.get(reverse("production:requisition-list"))
+    assert admin_response.status_code == 200
+    assert admin_response.context["pending_requisition_count"] == 2
+    assert admin_response.context["is_admin"] is True
+
+
+def test_requisition_approval_updates_ledger_and_locks_transition(admin_user, store_user, section, item, client):
+    section.supervisors.add(store_user)
+    requisition = Requisition.objects.create(
+        item=item,
+        requested_qty=Decimal("25.00"),
+        note="Need stock",
+        requested_by=store_user,
+        requested_section=section,
+    )
+
+    client.force_login(admin_user)
+    approve = client.post(
+        reverse("production:requisition-detail", args=[requisition.id]),
+        data={"decision": Requisition.STATUS_APPROVED, "note": "Approved"},
+        follow=True,
+    )
+    assert approve.status_code == 200
+    requisition.refresh_from_db()
+    assert requisition.status == Requisition.STATUS_APPROVED
+    assert requisition.reviewed_by == admin_user
+    assert requisition.reviewed_at is not None
+    assert StatusHistory.objects.filter(
+        requisition=requisition,
+        from_status=Requisition.STATUS_PENDING,
+        to_status=Requisition.STATUS_APPROVED,
+    ).exists()
+
+    ledger = DailyLedger.objects.get(
+        date=requisition.requested_date,
+        section=section,
+        item=item,
+    )
+    assert ledger.manual_received == Decimal("25.00")
+
+    second_review = client.post(
+        reverse("production:requisition-detail", args=[requisition.id]),
+        data={"decision": Requisition.STATUS_REJECTED, "note": "late reject"},
+        follow=True,
+    )
+    assert second_review.status_code == 200
+    requisition.refresh_from_db()
+    assert requisition.status == Requisition.STATUS_APPROVED
+    assert StatusHistory.objects.filter(requisition=requisition, to_status=Requisition.STATUS_REJECTED).count() == 0
+
+
+def test_requisition_rejection_requires_reason(admin_user, store_user, section, item, client):
+    section.supervisors.add(store_user)
+    requisition = Requisition.objects.create(
+        item=item,
+        requested_qty=Decimal("5.00"),
+        note="",
+        requested_by=store_user,
+        requested_section=section,
+    )
+
+    client.force_login(admin_user)
+    response = client.post(
+        reverse("production:requisition-detail", args=[requisition.id]),
+        data={"decision": Requisition.STATUS_REJECTED, "note": ""},
+    )
+    assert response.status_code == 200
+    requisition.refresh_from_db()
+    assert requisition.status == Requisition.STATUS_PENDING
+    assert b"Rejection reason is required" in response.content
+
+
+def test_dashboard_shows_pending_requisition_badge(admin_user, store_user, section, item, worker, client):
+    section.supervisors.add(store_user)
+    Requisition.objects.create(
+        item=item,
+        requested_qty=Decimal("3.00"),
+        note="one",
+        requested_by=store_user,
+        requested_section=section,
+    )
+    Requisition.objects.create(
+        item=item,
+        requested_qty=Decimal("4.00"),
+        note="two",
+        requested_by=store_user,
+        requested_section=section,
+    )
+    ProductionEntry.objects.create(
+        entry_date=date.today(),
+        section=section,
+        worker=worker,
+        item=item,
+        target_qty=Decimal("10"),
+        actual_qty=Decimal("10"),
+        shift_hours=Decimal("8"),
+        created_by=admin_user,
+    )
+
+    client.force_login(admin_user)
+    response = client.get(reverse("production:report-daily-section"), {"date": date.today().isoformat()})
+    assert response.status_code == 200
+    assert response.context["pending_requisition_count"] == 2
+    assert b"pending-requisition-badge" in response.content

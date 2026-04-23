@@ -5,7 +5,18 @@ from typing import Optional
 
 from django import forms
 
-from .models import AttendanceSheet, Item, MachineDowntime, Machine, ProductionEntry, Section, TargetRule, WasteEntry, Worker
+from .models import (
+    AttendanceSheet,
+    Item,
+    Machine,
+    MachineDowntime,
+    ProductionEntry,
+    Requisition,
+    Section,
+    TargetRule,
+    WasteEntry,
+    Worker,
+)
 
 
 from django.core.exceptions import ValidationError
@@ -303,4 +314,37 @@ class MachineDowntimeForm(forms.ModelForm):
             except ValidationError as exc:
                 for message in exc.messages:
                     self.add_error(None, message)
+        return cleaned
+
+
+class RequisitionForm(forms.ModelForm):
+    class Meta:
+        model = Requisition
+        fields = ["item", "requested_qty", "note"]
+        widgets = {
+            "requested_qty": forms.NumberInput(attrs={"step": "0.01", "min": "0.01"}),
+            "note": forms.Textarea(attrs={"rows": 3}),
+        }
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.fields["item"].queryset = Item.objects.filter(is_active=True)
+
+
+class RequisitionDecisionForm(forms.Form):
+    decision = forms.ChoiceField(
+        choices=[
+            (Requisition.STATUS_APPROVED, "Approve"),
+            (Requisition.STATUS_REJECTED, "Reject"),
+        ]
+    )
+    note = forms.CharField(required=False, widget=forms.Textarea(attrs={"rows": 3}))
+
+    def clean(self):
+        cleaned = super().clean()
+        decision = cleaned.get("decision")
+        note = (cleaned.get("note") or "").strip()
+        if decision == Requisition.STATUS_REJECTED and not note:
+            self.add_error("note", "Rejection reason is required.")
+        cleaned["note"] = note
         return cleaned

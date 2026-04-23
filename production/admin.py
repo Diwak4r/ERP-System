@@ -14,7 +14,9 @@ from .models import (
     MachineDowntime,
     ProcessFlowEdge,
     ProductionEntry,
+    Requisition,
     Section,
+    StatusHistory,
     TargetRule,
     WasteEntry,
     Worker,
@@ -200,6 +202,32 @@ class WasteEntryAdmin(admin.ModelAdmin):
     list_filter = ("waste_date", "section", "item")
     search_fields = ("item__name", "item__sku", "section__name", "reason")
     readonly_fields = ("created_at", "updated_at", "created_by")
+
+
+class StatusHistoryInline(admin.TabularInline):
+    model = StatusHistory
+    extra = 0
+    readonly_fields = ("from_status", "to_status", "changed_by", "note", "changed_at")
+    can_delete = False
+
+
+@admin.register(Requisition)
+class RequisitionAdmin(admin.ModelAdmin):
+    list_display = (
+        "created_at",
+        "item",
+        "requested_qty",
+        "status",
+        "requested_by",
+        "requested_section",
+        "requested_date",
+        "reviewed_by",
+        "reviewed_at",
+    )
+    list_filter = ("status", "requested_section", "requested_date", "created_at")
+    search_fields = ("item__name", "item__sku", "requested_by__username", "reviewed_by__username")
+    readonly_fields = ("created_at", "requested_by", "reviewed_by", "reviewed_at")
+    inlines = (StatusHistoryInline,)
 
 
 class AttendanceLineInline(admin.TabularInline):
