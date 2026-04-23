@@ -10,6 +10,7 @@ from django.urls import reverse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.template.loader import render_to_string
 from django.db import transaction
+from django.utils import timezone
 from django.db.models import Sum, F, ExpressionWrapper, FloatField, Case, When, Value, BooleanField, Count, Q
 from django.db.models.functions import Cast
 
@@ -18,6 +19,8 @@ from .forms import (
     MachineDowntimeForm,
     ProductionEntryForm,
     ProductionEntryFormSet,
+    RequisitionDecisionForm,
+    RequisitionForm,
     WasteEntryForm,
     WasteEntryFormSet,
 )
@@ -28,7 +31,9 @@ from .models import (
     Item,
     MachineDowntime,
     ProductionEntry,
+    Requisition,
     Section,
+    StatusHistory,
     TargetRule,
     WasteEntry,
     Worker,
@@ -36,6 +41,7 @@ from .models import (
 
 ROLE_ADMIN = "ADMIN"
 ROLE_SUPERVISOR = "SUPERVISOR"
+ROLE_STORE = "STORE"
 
 
 def _user_has_role(user, role: str) -> bool:
@@ -63,6 +69,19 @@ def _coerce_date(raw_value: str | None, default_value: date) -> date:
         return date.fromisoformat(raw_value) if raw_value else default_value
     except ValueError:
         return default_value
+
+
+def _pending_requisition_count(user) -> int:
+    if not _user_has_role(user, ROLE_ADMIN):
+        return 0
+    return Requisition.objects.filter(status=Requisition.STATUS_PENDING).count()
+
+
+def _store_section_for(user) -> Section | None:
+    sections = Section.objects.filter(is_active=True, supervisors=user)
+    if sections.count() == 1:
+        return sections.first()
+    return None
 
 
 @login_required
@@ -224,6 +243,8 @@ def daily_section_summary(request: HttpRequest) -> HttpResponse:
         "worker_count": worker_count,
         "today_downtime_alerts": downtime_alerts,
         "is_today_view": entry_date_val == today,
+        "pending_requisition_count": _pending_requisition_count(request.user),
+        "is_admin": _user_has_role(request.user, ROLE_ADMIN),
     }
     return render(request, "production/reports/daily_section_summary.html", context)
 
@@ -285,6 +306,157 @@ def worker_history(request: HttpRequest, worker_id: int) -> HttpResponse:
         "entries": entries,
     }
     return render(request, "production/reports/worker_history_modal.html", context)
+
+
+@login_required
+def requisition_create(request: HttpRequest) -> HttpResponse:
+    if not _user_has_role(request.user, ROLE_STORE):
+        return HttpResponseForbidden("Only STORE users can create requisitions")
+
+    store_section = _store_section_for(request.user)
+    if store_section is None:
+        return HttpResponseForbidden("STORE user must be assigned to exactly one active section")
+
+    if request.method == "POST":
+        form = RequisitionForm(request.POST)
+        if form.is_valid():
+            requisition = form.save(commit=False)
+            requisition.requested_by = request.user
+            requisition.requested_section = store_section
+            requisition.requested_date = date.today()
+            requisition.status = Requisition.STATUS_PENDING
+            requisition.save()
+            StatusHistory.objects.create(
+                requisition=requisition,
+                from_status="",
+                to_status=Requisition.STATUS_PENDING,
+                changed_by=request.user,
+                note=(requisition.note or "").strip(),
+            )
+            messages.success(request, "Requisition submitted for admin review.")
+            return redirect("production:requisition-list")
+    else:
+        form = RequisitionForm()
+
+    return render(
+        request,
+        "production/requisition_form.html",
+        {
+            "form": form,
+            "store_section": store_section,
+            "pending_requisition_count": _pending_requisition_count(request.user),
+        },
+    )
+
+
+@login_required
+def requisition_list(request: HttpRequest) -> HttpResponse:
+    if _user_has_role(request.user, ROLE_ADMIN):
+        requisitions = Requisition.objects.select_related(
+            "item",
+            "requested_by",
+            "requested_section",
+            "reviewed_by",
+        ).all()
+    elif _user_has_role(request.user, ROLE_STORE):
+        requisitions = Requisition.objects.select_related(
+            "item",
+            "requested_by",
+            "requested_section",
+            "reviewed_by",
+        ).filter(requested_by=request.user)
+    else:
+        return HttpResponseForbidden("Not allowed")
+
+    return render(
+        request,
+        "production/requisition_list.html",
+        {
+            "requisitions": requisitions,
+            "pending_requisition_count": _pending_requisition_count(request.user),
+            "is_admin": _user_has_role(request.user, ROLE_ADMIN),
+        },
+    )
+
+
+@login_required
+def requisition_detail(request: HttpRequest, requisition_id: int) -> HttpResponse:
+    if not _user_has_role(request.user, ROLE_ADMIN):
+        return HttpResponseForbidden("Only ADMIN users can review requisitions")
+
+    requisition = get_object_or_404(
+        Requisition.objects.select_related(
+            "item",
+            "requested_by",
+            "requested_section",
+            "reviewed_by",
+        ),
+        pk=requisition_id,
+    )
+
+    decision_form = RequisitionDecisionForm()
+    if request.method == "POST":
+        decision_form = RequisitionDecisionForm(request.POST)
+        if decision_form.is_valid():
+            decision = decision_form.cleaned_data["decision"]
+            note = decision_form.cleaned_data["note"]
+            with transaction.atomic():
+                locked_requisition = Requisition.objects.select_for_update().get(pk=requisition.pk)
+                if locked_requisition.status != Requisition.STATUS_PENDING:
+                    messages.error(request, "Only pending requisitions can be reviewed.")
+                    return redirect("production:requisition-detail", requisition_id=requisition.id)
+
+                previous_status = locked_requisition.status
+                locked_requisition.status = decision
+                locked_requisition.reviewed_by = request.user
+                locked_requisition.reviewed_at = timezone.now()
+                locked_requisition.save(update_fields=["status", "reviewed_by", "reviewed_at"])
+
+                StatusHistory.objects.create(
+                    requisition=locked_requisition,
+                    from_status=previous_status,
+                    to_status=decision,
+                    changed_by=request.user,
+                    note=note,
+                )
+
+                if decision == Requisition.STATUS_APPROVED:
+                    ledger, _ = DailyLedger.objects.select_for_update().get_or_create(
+                        date=locked_requisition.requested_date,
+                        section=locked_requisition.requested_section,
+                        item=locked_requisition.item,
+                    )
+                    ledger.manual_received = (ledger.manual_received or Decimal("0.00")) + locked_requisition.requested_qty
+                    ledger.save(update_fields=["manual_received"])
+                    messages.success(request, "Requisition approved and ledger updated.")
+                else:
+                    messages.success(request, "Requisition rejected.")
+
+            return redirect("production:requisition-detail", requisition_id=requisition.id)
+
+    requisition.refresh_from_db()
+    history = requisition.status_history.select_related("changed_by").all()
+    return render(
+        request,
+        "production/requisition_detail.html",
+        {
+            "requisition": requisition,
+            "history": history,
+            "decision_form": decision_form,
+            "pending_requisition_count": _pending_requisition_count(request.user),
+        },
+    )
+
+
+@login_required
+def requisition_pending_badge(request: HttpRequest) -> HttpResponse:
+    if not _user_has_role(request.user, ROLE_ADMIN):
+        return HttpResponse("")
+    return render(
+        request,
+        "production/requisition_pending_badge.html",
+        {"pending_requisition_count": _pending_requisition_count(request.user)},
+    )
 
 
 @login_required

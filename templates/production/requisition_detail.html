@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Requisition Detail</title>
+</head>
+<body>
+    <nav style="margin-bottom: 16px;">
+        <a href="{% url 'production:report-daily-section' %}">Dashboard</a> |
+        <a href="{% url 'production:requisition-list' %}">Requisitions</a>
+        <span style="margin-left: 8px;">
+            {% include "production/requisition_pending_badge.html" %}
+        </span>
+    </nav>
+
+    <h1>Requisition #{{ requisition.id }}</h1>
+
+    <p><strong>Item:</strong> {{ requisition.item.name }}</p>
+    <p><strong>Requested Qty:</strong> {{ requisition.requested_qty }}</p>
+    <p><strong>Requested Section:</strong> {{ requisition.requested_section.name }}</p>
+    <p><strong>Requested Date:</strong> {{ requisition.requested_date }}</p>
+    <p><strong>Requested By:</strong> {{ requisition.requested_by.username }}</p>
+    <p><strong>Status:</strong> {{ requisition.status }}</p>
+    <p><strong>Note:</strong> {{ requisition.note|default:"-" }}</p>
+    <p><strong>Reviewed By:</strong> {% if requisition.reviewed_by %}{{ requisition.reviewed_by.username }}{% else %}-{% endif %}</p>
+    <p><strong>Reviewed At:</strong> {{ requisition.reviewed_at|default:"-" }}</p>
+
+    {% if decision_form.non_field_errors %}
+        <div style="color: #b02a37;">{{ decision_form.non_field_errors }}</div>
+    {% endif %}
+
+    {% if requisition.status == "PENDING" %}
+        <h2>Review Action</h2>
+        <form method="post">
+            {% csrf_token %}
+            <p>
+                <label for="{{ decision_form.decision.id_for_label }}">Decision</label><br>
+                {{ decision_form.decision }}
+                {{ decision_form.decision.errors }}
+            </p>
+            <p>
+                <label for="{{ decision_form.note.id_for_label }}">Review Note / Rejection Reason</label><br>
+                {{ decision_form.note }}
+                {{ decision_form.note.errors }}
+            </p>
+            <button type="submit">Submit Decision</button>
+        </form>
+    {% endif %}
+
+    <h2>Status History</h2>
+    <table border="1" cellpadding="6" cellspacing="0">
+        <thead>
+            <tr>
+                <th>Changed At</th>
+                <th>From</th>
+                <th>To</th>
+                <th>Changed By</th>
+                <th>Note</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for row in history %}
+                <tr>
+                    <td>{{ row.changed_at }}</td>
+                    <td>{% if row.from_status %}{{ row.from_status }}{% else %}START{% endif %}</td>
+                    <td>{{ row.to_status }}</td>
+                    <td>{{ row.changed_by.username }}</td>
+                    <td>{{ row.note|default:"-" }}</td>
+                </tr>
+            {% empty %}
+                <tr>
+                    <td colspan="5">No history records.</td>
+                </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</body>
+</html>

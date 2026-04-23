@@ -1,0 +1,9 @@
+{% if pending_requisition_count %}
+<span style="background:#dc3545;color:#fff;border-radius:999px;padding:2px 8px;font-size:12px;">
+    {{ pending_requisition_count }}
+</span>
+{% else %}
+<span style="background:#6c757d;color:#fff;border-radius:999px;padding:2px 8px;font-size:12px;">
+    0
+</span>
+{% endif %}
