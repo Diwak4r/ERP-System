@@ -52,54 +52,19 @@ The following phases are merged to `main`. Skip them entirely:
 - Phase 2B: Wastage Capture ✅ (PR #51)
 - Phase 3A: Attendance Module ✅ (PR #55)
 - Phase 4A: Machine Downtime Logging ✅ (PR #57)
+- Phase 5A: Store Requisition Workflow ✅ (this PR)
 
-## 🎯 CURRENT TASK: Phase 5A — Store Requisition Workflow
+## 🎯 CURRENT TASK: Phase 6A — CSV Import + Safe Exports
 
-Implement the Store Requisition module per `IMPLEMENTATION_GUIDE.md § Phase 5A`.
-
-### Model: `Requisition`
-```python
-# Required fields:
-item             # FK → Item
-requested_qty    # DecimalField
-note             # TextField (optional)
-status           # CharField choices: PENDING / APPROVED / REJECTED
-requested_by     # FK → User (store user)
-reviewed_by      # FK → User (admin), nullable
-reviewed_at      # DateTimeField, nullable
-created_at       # auto_now_add
-```
-
-### StatusHistory Model (optional but preferred)
-```python
-# Track every status transition:
-requisition      # FK → Requisition
-from_status      # CharField
-to_status        # CharField
-changed_by       # FK → User
-note             # TextField
-changed_at       # auto_now_add
-```
-
-### Business Rules
-1. **RBAC** — only `STORE` group users can create requisitions; only `ADMIN` can approve/reject.
-2. **Status flow**: `PENDING → APPROVED` or `PENDING → REJECTED` (no going back).
-3. **Real-time notification**: when a new requisition is submitted, the dashboard must show an alert/badge count visible to ADMIN users.
-4. Approved requisitions update the `DailyLedger.manual_received` for the requested item/section/date.
-5. Rejected requisitions must record a rejection reason.
+Implement master data CSV import/export per `IMPLEMENTATION_GUIDE.md § Phase 6A`.
 
 ### Required Deliverables
-- [ ] `Requisition` model with migration
-- [ ] `StatusHistory` model (inline to Requisition)
-- [ ] `RequisitionForm` (store user: item + qty + note)
-- [ ] View: `requisition_create` (POST, STORE only)
-- [ ] View: `requisition_list` (GET, STORE sees own; ADMIN sees all, with PENDING badge count)
-- [ ] View: `requisition_detail` (GET + POST approval/rejection, ADMIN only)
-- [ ] Templates: `production/requisition_form.html`, `production/requisition_list.html`, `production/requisition_detail.html`
-- [ ] Admin registration with StatusHistory inline
-- [ ] URL patterns in `production/urls.py`
-- [ ] Dashboard badge: unread PENDING count shown in navbar for ADMIN
-- [ ] Unit tests: RBAC, status transition, ledger update on approval, rejection reason required
+- [ ] Admin import page for master data (`Items`, `Workers`, `Machines`, `Sections`)
+- [ ] Transaction-based CSV import (all-or-nothing)
+- [ ] Clear row-level error reporting for invalid records
+- [ ] CSV export endpoints for master data
+- [ ] Unit tests for import success/failure and RBAC
+- [ ] Unit tests for export endpoints and CSV headers/content
 
 ### Verification Commands
 ```bash
@@ -109,9 +74,9 @@ docker compose exec web ruff check .
 ```
 
 ### Delivery
-- Create a new branch: `feat/phase-5a-store-requisition`
+- Create a new branch: `feat/phase-6a-csv-import-export`
 - Open a PR targeting `main` — do NOT push directly to main
-- PR title: `feat: Phase 5A — Store Requisition Workflow`
+- PR title: `feat: Phase 6A — CSV Import + Safe Exports`
 
 ---
 

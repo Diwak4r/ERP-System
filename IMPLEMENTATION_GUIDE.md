@@ -179,7 +179,7 @@ Duration: 1 week | Priority: SECONDARY
 Duration: 1 week | Priority: SECONDARY
 
 #### Prompt 5A: Requisition Workflow + Approval
-- **Status:** ⏳ Pending
+- **Status:** ✅ COMPLETED (this PR)
 - **Deliverables:**
   - Requisition model (item, qty, note, status: PENDING/APPROVED/REJECTED)
   - Store user can request
