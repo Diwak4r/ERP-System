@@ -1,6 +1,7 @@
 from django.urls import path
 
 from . import views
+from . import csv_views
 
 app_name = "production"
 urlpatterns = [
@@ -21,4 +22,9 @@ urlpatterns = [
     path("reports/item-aggregate/", views.item_aggregate, name="report-item-aggregate"),
     path("reports/wastage/", views.wastage_report, name="report-wastage"),
     path("reports/worker-history/<int:worker_id>/", views.worker_history, name="report-worker-history"),
+    
+    # CSV Import / Export endpoints
+    path("admin/csv-import-export/", csv_views.csv_import_export_view, name="csv-import-export"),
+    path("admin/csv-export/<str:model_name>/", csv_views.csv_export_view, name="csv-export"),
+    path("admin/csv-template/<str:model_name>/", csv_views.csv_template_view, name="csv-template"),
 ]
