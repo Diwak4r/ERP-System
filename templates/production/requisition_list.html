@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Requisitions</title>
+    <script src="https://unpkg.com/htmx.org@1.9.12"></script>
+</head>
+<body>
+    <nav style="margin-bottom: 16px;">
+        <a href="{% url 'production:report-daily-section' %}">Dashboard</a> |
+        <a href="{% url 'production:requisition-list' %}">Requisitions</a>
+        {% if is_admin %}
+            <span
+                id="pending-requisition-badge"
+                hx-get="{% url 'production:requisition-pending-badge' %}"
+                hx-trigger="load, every 15s"
+                hx-swap="innerHTML"
+                style="margin-left: 8px;"
+            >
+                {% include "production/requisition_pending_badge.html" %}
+            </span>
+        {% endif %}
+        {% if not is_admin %}
+            | <a href="{% url 'production:requisition-create' %}">Create</a>
+        {% endif %}
+    </nav>
+
+    <h1>Requisition List</h1>
+
+    <table border="1" cellpadding="6" cellspacing="0">
+        <thead>
+            <tr>
+                <th>Created</th>
+                <th>Item</th>
+                <th>Qty</th>
+                <th>Section</th>
+                <th>Requested By</th>
+                <th>Status</th>
+                <th>Reviewed By</th>
+                <th>Action</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for requisition in requisitions %}
+                <tr {% if requisition.status == "PENDING" %}style="background: #fff3cd;"{% endif %}>
+                    <td>{{ requisition.created_at }}</td>
+                    <td>{{ requisition.item.name }}</td>
+                    <td>{{ requisition.requested_qty }}</td>
+                    <td>{{ requisition.requested_section.name }}</td>
+                    <td>{{ requisition.requested_by.username }}</td>
+                    <td>{{ requisition.status }}</td>
+                    <td>{% if requisition.reviewed_by %}{{ requisition.reviewed_by.username }}{% else %}-{% endif %}</td>
+                    <td>
+                        {% if is_admin %}
+                            <a href="{% url 'production:requisition-detail' requisition.id %}">Review</a>
+                        {% else %}
+                            -
+                        {% endif %}
+                    </td>
+                </tr>
+            {% empty %}
+                <tr>
+                    <td colspan="8">No requisitions available.</td>
+                </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</body>
+</html>

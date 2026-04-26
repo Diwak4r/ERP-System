@@ -401,6 +401,78 @@ class MachineDowntime(models.Model):
         super().save(*args, **kwargs)
 
 
+class Requisition(models.Model):
+    STATUS_PENDING = "PENDING"
+    STATUS_APPROVED = "APPROVED"
+    STATUS_REJECTED = "REJECTED"
+    STATUS_CHOICES = [
+        (STATUS_PENDING, "Pending"),
+        (STATUS_APPROVED, "Approved"),
+        (STATUS_REJECTED, "Rejected"),
+    ]
+
+    item = models.ForeignKey(Item, on_delete=models.PROTECT, related_name="requisitions")
+    requested_qty = models.DecimalField(max_digits=12, decimal_places=2)
+    note = models.TextField(blank=True, default="")
+    status = models.CharField(max_length=10, choices=STATUS_CHOICES, default=STATUS_PENDING)
+    requested_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.PROTECT,
+        related_name="requisitions",
+    )
+    reviewed_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.PROTECT,
+        related_name="reviewed_requisitions",
+        null=True,
+        blank=True,
+    )
+    reviewed_at = models.DateTimeField(null=True, blank=True)
+    requested_section = models.ForeignKey(
+        Section,
+        on_delete=models.PROTECT,
+        related_name="requisitions",
+    )
+    requested_date = models.DateField(default=date.today)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+        indexes = [
+            models.Index(fields=["status", "created_at"]),
+            models.Index(fields=["requested_by", "status"]),
+        ]
+
+    def __str__(self) -> str:  # pragma: no cover - repr helper
+        return f"{self.item} - {self.requested_qty} ({self.status})"
+
+
+class StatusHistory(models.Model):
+    requisition = models.ForeignKey(
+        Requisition,
+        on_delete=models.CASCADE,
+        related_name="status_history",
+    )
+    from_status = models.CharField(max_length=10, blank=True, default="")
+    to_status = models.CharField(max_length=10)
+    changed_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.PROTECT,
+        related_name="requisition_status_changes",
+    )
+    note = models.TextField(blank=True, default="")
+    changed_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-changed_at", "-id"]
+        indexes = [
+            models.Index(fields=["requisition", "changed_at"]),
+        ]
+
+    def __str__(self) -> str:  # pragma: no cover - repr helper
+        return f"{self.requisition_id}: {self.from_status or 'START'} -> {self.to_status}"
+
+
 class DayLock(models.Model):
     section = models.ForeignKey(Section, on_delete=models.CASCADE)
     lock_date = models.DateField()

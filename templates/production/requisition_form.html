@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Create Requisition</title>
+</head>
+<body>
+    <nav style="margin-bottom: 16px;">
+        <a href="{% url 'production:report-daily-section' %}">Dashboard</a> |
+        <a href="{% url 'production:requisition-list' %}">Requisitions</a>
+    </nav>
+
+    <h1>Create Store Requisition</h1>
+    <p><strong>Section:</strong> {{ store_section.name }}</p>
+
+    {% if form.non_field_errors %}
+        <div style="color: #b02a37;">{{ form.non_field_errors }}</div>
+    {% endif %}
+
+    <form method="post">
+        {% csrf_token %}
+        <p>
+            <label for="{{ form.item.id_for_label }}">Item</label><br>
+            {{ form.item }}
+            {{ form.item.errors }}
+        </p>
+        <p>
+            <label for="{{ form.requested_qty.id_for_label }}">Requested Quantity</label><br>
+            {{ form.requested_qty }}
+            {{ form.requested_qty.errors }}
+        </p>
+        <p>
+            <label for="{{ form.note.id_for_label }}">Note (optional)</label><br>
+            {{ form.note }}
+            {{ form.note.errors }}
+        </p>
+        <button type="submit">Submit Requisition</button>
+    </form>
+</body>
+</html>

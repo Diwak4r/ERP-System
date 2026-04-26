@@ -43,6 +43,22 @@
 </head>
 <body>
     <h1>Daily Section Summary</h1>
+    <nav style="margin-bottom: 16px;">
+        <a href="{% url 'production:entry' %}">Production Entry</a> |
+        <a href="{% url 'production:report-daily-section' %}">Dashboard</a> |
+        <a href="{% url 'production:requisition-list' %}">Requisitions</a>
+        {% if is_admin %}
+            <span
+                id="pending-requisition-badge"
+                hx-get="{% url 'production:requisition-pending-badge' %}"
+                hx-trigger="load, every 15s"
+                hx-swap="innerHTML"
+                style="margin-left: 8px;"
+            >
+                {% include "production/requisition_pending_badge.html" %}
+            </span>
+        {% endif %}
+    </nav>
 
     <form method="get">
         <label for="date">Date:</label>
