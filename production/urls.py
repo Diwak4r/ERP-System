@@ -22,7 +22,7 @@ urlpatterns = [
     path("reports/item-aggregate/", views.item_aggregate, name="report-item-aggregate"),
     path("reports/wastage/", views.wastage_report, name="report-wastage"),
     path("reports/worker-history/<int:worker_id>/", views.worker_history, name="report-worker-history"),
-    
+
     # CSV Import / Export endpoints
     path("admin/csv-import-export/", csv_views.csv_import_export_view, name="csv-import-export"),
     path("admin/csv-export/<str:model_name>/", csv_views.csv_export_view, name="csv-export"),

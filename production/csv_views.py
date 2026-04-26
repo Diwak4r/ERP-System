@@ -7,10 +7,13 @@ from django.http import HttpResponse
 from django.db import transaction
 from django.core.exceptions import ValidationError
 
+from typing import Any, Dict, List, Type
+from django.db import models
+
 from .models import Item, Worker, Machine, Section
 
 # Map model names to actual classes and their expected CSV headers
-MODELS_MAP = {
+MODELS_MAP: Dict[str, Dict[str, Any]] = {
     "item": {
         "model": Item,
         "headers": ["name", "sku", "unit", "is_active"],
@@ -45,7 +48,7 @@ def csv_import_export_view(request):
         if not csv_file:
             messages.error(request, "Please upload a CSV file.")
             return redirect("production:csv-import-export")
-        
+
         if not csv_file.name.endswith('.csv'):
             messages.error(request, "File must be a CSV.")
             return redirect("production:csv-import-export")
@@ -56,8 +59,8 @@ def csv_import_export_view(request):
             return redirect("production:csv-import-export")
 
         model_info = MODELS_MAP[model_name]
-        ModelClass = model_info["model"]
-        expected_headers = model_info["headers"]
+        ModelClass: Type[models.Model] = model_info["model"]
+        expected_headers: List[str] = model_info["headers"]
 
         # Decode file
         try:
@@ -85,7 +88,7 @@ def csv_import_export_view(request):
                 for row_idx, row in enumerate(csv_reader, start=2):
                     try:
                         # Extract data and process mapping
-                        data = {}
+                        data: Dict[str, Any] = {}
                         for header in expected_headers:
                             val = row.get(header, "").strip()
                             if header == "is_active" or header == "is_daily_wage":
@@ -118,7 +121,7 @@ def csv_import_export_view(request):
                         instance.full_clean()
                         instance.save()
                         rows_processed += 1
-                        
+
                     except ValidationError as e:
                         if hasattr(e, 'message_dict'):
                             msg = ", ".join(f"{k}: {v}" for k, v in e.message_dict.items())
@@ -158,8 +161,8 @@ def csv_export_view(request, model_name):
         return redirect("production:csv-import-export")
 
     model_info = MODELS_MAP[model_name]
-    ModelClass = model_info["model"]
-    headers = model_info["headers"]
+    ModelClass: Type[models.Model] = model_info["model"]
+    headers: List[str] = model_info["headers"]
 
     response = HttpResponse(content_type="text/csv")
     response["Content-Disposition"] = f'attachment; filename="{model_name}_export.csv"'
@@ -175,11 +178,11 @@ def csv_export_view(request, model_name):
                 val = obj.section.code if obj.section else ""
             else:
                 val = getattr(obj, header, "")
-            
+
             # SECURITY: Prevent CSV Formula Injection in Excel
             if isinstance(val, str) and val and val[0] in ('=', '+', '-', '@', '\t', '\r'):
                 val = f"'{val}"
-                
+
             row.append(val)
         writer.writerow(row)
 
@@ -192,7 +195,7 @@ def csv_template_view(request, model_name):
         return redirect("production:csv-import-export")
 
     model_info = MODELS_MAP[model_name]
-    headers = model_info["headers"]
+    headers: List[str] = model_info["headers"]
 
     response = HttpResponse(content_type="text/csv")
     response["Content-Disposition"] = f'attachment; filename="{model_name}_template.csv"'
