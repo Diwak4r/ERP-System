@@ -5,6 +5,7 @@ import pytest
 from django.contrib.auth import get_user_model
 from django.contrib.auth.models import Group
 from django.core.exceptions import ValidationError
+from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import RequestFactory
 from django.contrib.admin.sites import AdminSite
 from django.urls import reverse
@@ -695,3 +696,104 @@ def test_dashboard_shows_pending_requisition_badge(admin_user, store_user, secti
     assert response.status_code == 200
     assert response.context["pending_requisition_count"] == 2
     assert b"pending-requisition-badge" in response.content
+
+
+def test_csv_import_export_page_requires_admin(supervisor_user, client):
+    unauthenticated = client.get(reverse("production:csv-import-export"))
+    assert unauthenticated.status_code == 302
+
+    client.force_login(supervisor_user)
+    forbidden = client.get(reverse("production:csv-import-export"))
+    assert forbidden.status_code == 403
+
+
+def test_csv_template_requires_admin(supervisor_user, client):
+    client.force_login(supervisor_user)
+    response = client.get(reverse("production:csv-template", kwargs={"model_name": "item"}))
+    assert response.status_code == 403
+
+
+def test_csv_template_generation(admin_user, client):
+    client.force_login(admin_user)
+    response = client.get(reverse("production:csv-template", kwargs={"model_name": "worker"}))
+    assert response.status_code == 200
+    assert response["Content-Type"] == "text/csv"
+    assert response.content.decode("utf-8").strip() == "name,employee_code,is_daily_wage,is_active"
+
+
+def test_csv_export_headers_content_and_formula_safety(admin_user, client):
+    Item.objects.create(name="=Danger", sku="ITEM-CSV-001", unit=Item.UNIT_KG, is_active=True)
+
+    client.force_login(admin_user)
+    response = client.get(reverse("production:csv-export", kwargs={"model_name": "item"}))
+
+    assert response.status_code == 200
+    content_lines = response.content.decode("utf-8").splitlines()
+    assert content_lines[0] == "name,sku,unit,is_active"
+    assert content_lines[1] == "'=Danger,ITEM-CSV-001,KG,True"
+
+
+def test_csv_import_item_success(admin_user, client):
+    client.force_login(admin_user)
+    csv_content = b"name,sku,unit,is_active\nNew Item,NEW-001,PCS,true"
+    csv_file = SimpleUploadedFile("items.csv", csv_content, content_type="text/csv")
+
+    response = client.post(
+        reverse("production:csv-import-export"),
+        data={"model_name": "item", "csv_file": csv_file},
+        follow=True,
+    )
+
+    assert response.status_code == 200
+    assert Item.objects.filter(sku="NEW-001", name="New Item", unit=Item.UNIT_PCS).exists()
+
+
+def test_csv_import_rollback_with_row_level_errors(admin_user, client):
+    client.force_login(admin_user)
+    csv_content = b"name,sku,unit,is_active\nGood Item,GOOD-001,PCS,true\nBad Bool,BAD-001,PCS,not-bool"
+    csv_file = SimpleUploadedFile("items.csv", csv_content, content_type="text/csv")
+
+    response = client.post(
+        reverse("production:csv-import-export"),
+        data={"model_name": "item", "csv_file": csv_file},
+        follow=True,
+    )
+
+    assert response.status_code == 200
+    assert not Item.objects.filter(sku="GOOD-001").exists()
+    messages = [str(message) for message in response.context["messages"]]
+    assert any("Row 3:" in message for message in messages)
+    assert any("is_active" in message for message in messages)
+
+
+def test_csv_import_machine_section_code_mapping(admin_user, section, client):
+    client.force_login(admin_user)
+    csv_content = f"section_code,name,machine_code,is_active\n{section.code},Machine CSV,CSV-M-01,true".encode()
+    csv_file = SimpleUploadedFile("machines.csv", csv_content, content_type="text/csv")
+
+    response = client.post(
+        reverse("production:csv-import-export"),
+        data={"model_name": "machine", "csv_file": csv_file},
+        follow=True,
+    )
+
+    assert response.status_code == 200
+    machine = Machine.objects.get(machine_code="CSV-M-01")
+    assert machine.section == section
+
+
+def test_csv_import_requires_known_section_code(admin_user, client):
+    client.force_login(admin_user)
+    csv_content = b"section_code,name,machine_code,is_active\nUNKNOWN,Machine CSV,CSV-M-02,true"
+    csv_file = SimpleUploadedFile("machines.csv", csv_content, content_type="text/csv")
+
+    response = client.post(
+        reverse("production:csv-import-export"),
+        data={"model_name": "machine", "csv_file": csv_file},
+        follow=True,
+    )
+
+    assert response.status_code == 200
+    assert not Machine.objects.filter(machine_code="CSV-M-02").exists()
+    messages = [str(message) for message in response.context["messages"]]
+    assert any("Row 2:" in message and "Section with code 'UNKNOWN' not found." in message for message in messages)
