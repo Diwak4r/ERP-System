@@ -1,6 +1,6 @@
 import csv
 import io
-from typing import Any
+from typing import Any, Sequence
 
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
@@ -56,7 +56,7 @@ def _validate_admin_access(request):
     return HttpResponseForbidden("Only ADMIN users can access CSV import/export.")
 
 
-def _normalize_headers(fieldnames: list[str] | None) -> list[str]:
+def _normalize_headers(fieldnames: Sequence[str] | None) -> list[str]:
     if fieldnames is None:
         return []
     return [(name or "").strip() for name in fieldnames]
