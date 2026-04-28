@@ -1,0 +1,364 @@
+﻿diff --git a/config/settings/base.py b/config/settings/base.py
+index a07e102..9aa73bc 100644
+--- a/config/settings/base.py
++++ b/config/settings/base.py
+@@ -89,3 +89,32 @@ DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
+ 
+ LOGIN_URL = "/admin/login/"
+ 
++
++LOGGING = {
++    "version": 1,
++    "disable_existing_loggers": False,
++    "formatters": {
++        "verbose": {
++            "format": "{levelname} {asctime} {module} {message}",
++            "style": "{",
++        },
++    },
++    "handlers": {
++        "console": {
++            "level": "INFO",
++            "class": "logging.StreamHandler",
++            "formatter": "verbose",
++        },
++    },
++    "loggers": {
++        "django": {
++            "handlers": ["console"],
++            "level": "INFO",
++        },
++        "production": {
++            "handlers": ["console"],
++            "level": "INFO",
++            "propagate": True,
++        },
++    },
++}
+diff --git a/docker/gunicorn.conf.py b/docker/gunicorn.conf.py
+new file mode 100644
+index 0000000..153c91a
+--- /dev/null
++++ b/docker/gunicorn.conf.py
+@@ -0,0 +1,4 @@
++bind = "0.0.0.0:8000"
++workers = 3
++accesslog = "-"
++errorlog = "-"
+diff --git a/docker/nginx.conf b/docker/nginx.conf
+new file mode 100644
+index 0000000..75142e7
+--- /dev/null
++++ b/docker/nginx.conf
+@@ -0,0 +1,16 @@
++server {
++    listen 80;
++    server_name localhost;
++
++    location / {
++        proxy_pass http://web:8000;
++        proxy_set_header Host $host;
++        proxy_set_header X-Real-IP $remote_addr;
++        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
++        proxy_set_header X-Forwarded-Proto $scheme;
++    }
++
++    location /static/ {
++        alias /app/staticfiles/;
++    }
++}
+diff --git a/docs/DEPLOYMENT.md b/docs/DEPLOYMENT.md
+new file mode 100644
+index 0000000..1cf9675
+--- /dev/null
++++ b/docs/DEPLOYMENT.md
+@@ -0,0 +1,56 @@
++# Deployment Guide
++
++This document outlines the deployment procedure for the ERP System using Docker, Gunicorn, and Nginx.
++
++## Architecture
++
++*   **Django Application**: Served using Gunicorn (`docker/gunicorn.conf.py`).
++*   **Reverse Proxy**: Nginx (`docker/nginx.conf`) sits in front of Gunicorn to handle HTTP requests and serve static files.
++*   **Database**: PostgreSQL is used as the relational database backend.
++
++## Deployment Steps
++
++1.  **Environment Variables**:
++    Ensure `.env` contains production-ready variables, especially:
++    *   `DJANGO_SETTINGS_MODULE=config.settings.prod`
++    *   `DJANGO_SECRET_KEY=...` (Use a strong random key)
++    *   `DATABASE_URL=...` (Your PostgreSQL connection string)
++    *   `DJANGO_ALLOWED_HOSTS=...`
++    *   `SECURE_SSL_REDIRECT=true`
++    *   `SESSION_COOKIE_SECURE=true`
++    *   `CSRF_COOKIE_SECURE=true`
++
++2.  **Build and Run**:
++    Use Docker Compose to build and start the application.
++    ```bash
++    docker compose -f docker-compose.yml build
++    docker compose -f docker-compose.yml up -d
++    ```
++
++3.  **Run Migrations**:
++    Apply any pending database migrations.
++    ```bash
++    docker compose -f docker-compose.yml exec web python manage.py migrate
++    ```
++
++4.  **Collect Static Files**:
++    Gather static files for Nginx to serve.
++    ```bash
++    docker compose -f docker-compose.yml exec web python manage.py collectstatic --noinput
++    ```
++
++## Database Backup and Restore
++
++To ensure data safety, perform regular backups of the PostgreSQL database using `pg_dump`.
++
++### Backup
++```bash
++docker compose exec db pg_dump -U <username> -d <database_name> -F c -f /tmp/db_backup.dump
++docker cp <db_container_id>:/tmp/db_backup.dump ./db_backup.dump
++```
++
++### Restore
++```bash
++docker cp ./db_backup.dump <db_container_id>:/tmp/db_backup.dump
++docker compose exec db pg_restore -U <username> -d <database_name> -1 /tmp/db_backup.dump
++```
+diff --git a/production/tests.py b/production/tests.py
+index d95df63..eae7423 100644
+--- a/production/tests.py
++++ b/production/tests.py
+@@ -338,7 +338,7 @@ def test_wastage_report_shows_percentage(admin_user, section, item, client):
+     client.force_login(admin_user)
+     response = client.get(reverse("production:report-wastage"))
+     assert response.status_code == 200
+-    assert response.context["rows"][0]["waste_percentage"] == Decimal("10.00")
++    assert response.context["page_obj"][0]["waste_percentage"] == Decimal("10.00")
+ 
+ 
+ def test_attendance_entry_saves_present_workers(supervisor_user, section, worker, client):
+@@ -588,7 +588,7 @@ def test_requisition_list_scope_for_store_vs_admin(admin_user, store_user, secti
+     client.force_login(store_user)
+     store_response = client.get(reverse("production:requisition-list"))
+     assert store_response.status_code == 200
+-    requisitions = list(store_response.context["requisitions"])
++    requisitions = list(store_response.context["page_obj"])
+     assert requisitions == [own]
+ 
+     client.force_login(admin_user)
+@@ -797,3 +797,33 @@ def test_csv_import_requires_known_section_code(admin_user, client):
+     assert not Machine.objects.filter(machine_code="CSV-M-02").exists()
+     messages = [str(message) for message in response.context["messages"]]
+     assert any("Row 2:" in message and "Section with code 'UNKNOWN' not found." in message for message in messages)
++
++def test_pagination_logic_for_requisition_list(admin_user, section, item, client):
++    """Verify that pagination limits items to 50 per page."""
++    # Create 51 requisitions
++    reqs = [
++        Requisition(
++            item=item,
++            requested_qty=Decimal("1.00"),
++            note=f"Req {i}",
++            requested_by=admin_user,
++            requested_section=section,
++        )
++        for i in range(51)
++    ]
++    Requisition.objects.bulk_create(reqs)
++
++    client.force_login(admin_user)
++
++    # Page 1 should have 50 items
++    response = client.get(reverse("production:requisition-list"))
++    assert response.status_code == 200
++    page_obj = response.context["page_obj"]
++    assert len(page_obj.object_list) == 50
++    assert page_obj.paginator.num_pages == 2
++
++    # Page 2 should have 1 item
++    response_p2 = client.get(reverse("production:requisition-list"), {"page": 2})
++    assert response_p2.status_code == 200
++    page_obj_p2 = response_p2.context["page_obj"]
++    assert len(page_obj_p2.object_list) == 1
+diff --git a/production/views.py b/production/views.py
+index 0b3e340..b3be763 100644
+--- a/production/views.py
++++ b/production/views.py
+@@ -8,6 +8,7 @@ from django.contrib.auth.decorators import login_required
+ from django.http import HttpRequest, HttpResponse, HttpResponseForbidden
+ from django.urls import reverse
+ from django.shortcuts import get_object_or_404, redirect, render
++from django.core.paginator import Paginator
+ from django.template.loader import render_to_string
+ from django.db import transaction
+ from django.utils import timezone
+@@ -368,11 +369,15 @@ def requisition_list(request: HttpRequest) -> HttpResponse:
+     else:
+         return HttpResponseForbidden("Not allowed")
+ 
++    paginator = Paginator(requisitions.order_by("-created_at"), 50)
++    page_number = request.GET.get('page')
++    page_obj = paginator.get_page(page_number)
++
+     return render(
+         request,
+         "production/requisition_list.html",
+         {
+-            "requisitions": requisitions,
++            "page_obj": page_obj,
+             "pending_requisition_count": _pending_requisition_count(request.user),
+             "is_admin": _user_has_role(request.user, ROLE_ADMIN),
+         },
+@@ -688,8 +693,12 @@ def wastage_report(request: HttpRequest) -> HttpResponse:
+             }
+         )
+ 
++    paginator = Paginator(rows, 50)
++    page_number = request.GET.get('page')
++    page_obj = paginator.get_page(page_number)
++
+     context = {
+-        "rows": rows,
++        "page_obj": page_obj,
+         "sections": sections,
+         "selected_section": selected_section,
+         "start_date": start_date_val,
+@@ -750,8 +759,12 @@ def downtime_list(request: HttpRequest) -> HttpResponse:
+         rows = rows.filter(machine__section=selected_section)
+     rows = rows.order_by("machine__section__name", "machine__name", "-start_time")
+ 
++    paginator = Paginator(rows, 50)
++    page_number = request.GET.get('page')
++    page_obj = paginator.get_page(page_number)
++
+     context = {
+-        "rows": rows,
++        "page_obj": page_obj,
+         "report_date": report_date,
+         "sections": sections,
+         "selected_section": selected_section,
+diff --git a/templates/production/reports/downtime_list.html b/templates/production/reports/downtime_list.html
+index 5c74ab9..6d4c39b 100644
+--- a/templates/production/reports/downtime_list.html
++++ b/templates/production/reports/downtime_list.html
+@@ -38,7 +38,7 @@
+             </tr>
+         </thead>
+         <tbody>
+-            {% for row in rows %}
++            {% for row in page_obj %}
+                 <tr {% if row.duration_minutes > 0 %}style="background-color: #f8d7da;"{% endif %}>
+                     <td>{{ row.machine.section.name }}</td>
+                     <td>{{ row.machine.name }}</td>
+@@ -56,6 +56,26 @@
+                 </tr>
+             {% endfor %}
+         </tbody>
++
+     </table>
++
++    <div class="pagination" style="margin-top: 1em;">
++        <span class="step-links">
++            {% if page_obj.has_previous %}
++                <a href="?{% if request.GET.date %}date={{ request.GET.date }}&{% endif %}{% if request.GET.section %}section={{ request.GET.section }}&{% endif %}page=1">&laquo; first</a>
++                <a href="?{% if request.GET.date %}date={{ request.GET.date }}&{% endif %}{% if request.GET.section %}section={{ request.GET.section }}&{% endif %}page={{ page_obj.previous_page_number }}">previous</a>
++            {% endif %}
++
++            <span class="current">
++                Page {{ page_obj.number }} of {{ page_obj.paginator.num_pages }}.
++            </span>
++
++            {% if page_obj.has_next %}
++                <a href="?{% if request.GET.date %}date={{ request.GET.date }}&{% endif %}{% if request.GET.section %}section={{ request.GET.section }}&{% endif %}page={{ page_obj.next_page_number }}">next</a>
++                <a href="?{% if request.GET.date %}date={{ request.GET.date }}&{% endif %}{% if request.GET.section %}section={{ request.GET.section }}&{% endif %}page={{ page_obj.paginator.num_pages }}">last &raquo;</a>
++            {% endif %}
++        </span>
++    </div>
++
+ </body>
+ </html>
+diff --git a/templates/production/reports/wastage_report.html b/templates/production/reports/wastage_report.html
+index 0efca4c..4b8accd 100644
+--- a/templates/production/reports/wastage_report.html
++++ b/templates/production/reports/wastage_report.html
+@@ -35,7 +35,7 @@
+             </tr>
+         </thead>
+         <tbody>
+-            {% for row in rows %}
++            {% for row in page_obj %}
+             <tr>
+                 <td>{{ row.date }}</td>
+                 <td>{{ row.section.name }}</td>
+@@ -50,6 +50,26 @@
+             </tr>
+             {% endfor %}
+         </tbody>
++
+     </table>
++
++    <div class="pagination" style="margin-top: 1em;">
++        <span class="step-links">
++            {% if page_obj.has_previous %}
++                <a href="?{% if request.GET.start_date %}start_date={{ request.GET.start_date }}&{% endif %}{% if request.GET.end_date %}end_date={{ request.GET.end_date }}&{% endif %}{% if request.GET.section %}section={{ request.GET.section }}&{% endif %}page=1">&laquo; first</a>
++                <a href="?{% if request.GET.start_date %}start_date={{ request.GET.start_date }}&{% endif %}{% if request.GET.end_date %}end_date={{ request.GET.end_date }}&{% endif %}{% if request.GET.section %}section={{ request.GET.section }}&{% endif %}page={{ page_obj.previous_page_number }}">previous</a>
++            {% endif %}
++
++            <span class="current">
++                Page {{ page_obj.number }} of {{ page_obj.paginator.num_pages }}.
++            </span>
++
++            {% if page_obj.has_next %}
++                <a href="?{% if request.GET.start_date %}start_date={{ request.GET.start_date }}&{% endif %}{% if request.GET.end_date %}end_date={{ request.GET.end_date }}&{% endif %}{% if request.GET.section %}section={{ request.GET.section }}&{% endif %}page={{ page_obj.next_page_number }}">next</a>
++                <a href="?{% if request.GET.start_date %}start_date={{ request.GET.start_date }}&{% endif %}{% if request.GET.end_date %}end_date={{ request.GET.end_date }}&{% endif %}{% if request.GET.section %}section={{ request.GET.section }}&{% endif %}page={{ page_obj.paginator.num_pages }}">last &raquo;</a>
++            {% endif %}
++        </span>
++    </div>
++
+ </body>
+ </html>
+diff --git a/templates/production/requisition_list.html b/templates/production/requisition_list.html
+index 7f336d8..06e3766 100644
+--- a/templates/production/requisition_list.html
++++ b/templates/production/requisition_list.html
+@@ -40,7 +40,7 @@
+             </tr>
+         </thead>
+         <tbody>
+-            {% for requisition in requisitions %}
++            {% for requisition in page_obj %}
+                 <tr {% if requisition.status == "PENDING" %}style="background: #fff3cd;"{% endif %}>
+                     <td>{{ requisition.created_at }}</td>
+                     <td>{{ requisition.item.name }}</td>
+@@ -63,6 +63,26 @@
+                 </tr>
+             {% endfor %}
+         </tbody>
++
+     </table>
++
++    <div class="pagination" style="margin-top: 1em;">
++        <span class="step-links">
++            {% if page_obj.has_previous %}
++                <a href="?page=1">&laquo; first</a>
++                <a href="?page={{ page_obj.previous_page_number }}">previous</a>
++            {% endif %}
++
++            <span class="current">
++                Page {{ page_obj.number }} of {{ page_obj.paginator.num_pages }}.
++            </span>
++
++            {% if page_obj.has_next %}
++                <a href="?page={{ page_obj.next_page_number }}">next</a>
++                <a href="?page={{ page_obj.paginator.num_pages }}">last &raquo;</a>
++            {% endif %}
++        </span>
++    </div>
++
+ </body>
+ </html>

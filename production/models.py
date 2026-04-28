@@ -125,6 +125,8 @@ class ProductionEntry(models.Model):
         ordering = ["-entry_date", "section__name", "worker__name"]
         indexes = [
             models.Index(fields=["entry_date", "section", "item"]),
+            models.Index(fields=["entry_date", "section"]),
+            models.Index(fields=["worker", "entry_date"]),
         ]
 
     def __str__(self) -> str:  # pragma: no cover - repr helper
@@ -531,6 +533,9 @@ class DailyLedger(models.Model):
     class Meta:
         unique_together = ("date", "section", "item")
         ordering = ["-date", "section__name", "item__name"]
+        indexes = [
+            models.Index(fields=["date", "section", "item"]),
+        ]
 
     def __str__(self) -> str:
         return f"{self.date} - {self.section} - {self.item}"
