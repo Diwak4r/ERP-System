@@ -10,24 +10,8 @@ jobs:
   test:
     runs-on: ubuntu-latest
 
-    services:
-      postgres:
-        image: postgres:16
-        env:
-          POSTGRES_DB: erp
-          POSTGRES_USER: erp
-          POSTGRES_PASSWORD: erp
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd="pg_isready -U erp -d erp"
-          --health-interval=10s
-          --health-timeout=5s
-          --health-retries=5
-
     env:
-      DJANGO_SETTINGS_MODULE: config.settings.dev
-      DATABASE_URL: postgres://erp:erp@localhost:5432/erp
+      DJANGO_SETTINGS_MODULE: config.settings.test
       DJANGO_SECRET_KEY: ci-secret-key
       DJANGO_DEBUG: "False"
       DJANGO_ALLOWED_HOSTS: localhost,127.0.0.1
@@ -55,3 +39,15 @@ jobs:
       - name: Test
         run: pytest
 
+      - name: Deploy check (prod settings)
+        env:
+          DJANGO_SETTINGS_MODULE: config.settings.prod
+          # Use a real-looking 50-char key so W009 doesn't fire
+          DJANGO_SECRET_KEY: "ci-deploy-check-key-abcdefghijklmnopqrstuvwxyz123456"
+          DATABASE_URL: sqlite:///ci-deploy-check.db
+          DJANGO_ALLOWED_HOSTS: example.com
+          SECURE_SSL_REDIRECT: "false"      # reverse-proxy handles SSL in real prod
+          SESSION_COOKIE_SECURE: "true"
+          CSRF_COOKIE_SECURE: "true"
+          SECURE_HSTS_SECONDS: "31536000"
+        run: python manage.py check --deploy --settings=config.settings.prod

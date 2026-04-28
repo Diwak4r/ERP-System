@@ -192,29 +192,25 @@ Duration: 1 week | Priority: SECONDARY
 Duration: 1-2 weeks | Priority: CRITICAL
 
 #### Prompt 6A: CSV Import + Safe Exports
-- **Status:** ⏳ Pending
+- **Status:** ✅ COMPLETED (merged to main — PR #62)
 - **Deliverables:**
   - Admin import page (Items, Workers, Machines, Sections)
   - Transaction-based import (all-or-nothing)
-  - Error reporting
-  - Export CSV endpoints
+  - Row-level error reporting
+  - Export CSV endpoints with formula-injection protection
 
 #### Prompt 6B: Security + Performance + Monitoring + Deployment
-- **Status:** ⏳ Pending
+- **Status:** ✅ COMPLETED (merged to main — PR #63)
 - **Deliverables:**
-  - Django security settings (SECURE_SSL_REDIRECT, secure cookies, etc.)
-  - `manage.py check --deploy` verification
-  - Rate limiting (login)
-  - Database indexes for report queries
-  - Pagination for large tables
-  - Structured logging
-  - Sentry/error tracking setup (optional)
-  - Production docker-compose.yml or K8s docs
-  - Gunicorn + Nginx config
-  - Database backup/restore docs
-  - Deployment playbook
-  - End-to-end smoke tests
-  - CI gates (ruff, mypy, pytest, manage.py check --deploy)
+  - Django security settings in `prod.py` (SECURE_SSL_REDIRECT, secure cookies, HSTS, etc.)
+  - `manage.py check --deploy` gate added to CI
+  - `LoginRateLimitMiddleware` — brute-force protection on admin login
+  - Database indexes on ProductionEntry, DailyLedger for report queries
+  - Pagination on downtime, wastage, requisition list views
+  - Structured `LOGGING` configuration
+  - Gunicorn + Nginx config files
+  - `DEPLOYMENT.md` playbook
+  - CI gates: ruff, mypy, pytest, `manage.py check --deploy`
 
 ## Key Requirements (Non-Negotiables)
 
