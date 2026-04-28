@@ -8,6 +8,7 @@ from django.contrib.auth.decorators import login_required
 from django.http import HttpRequest, HttpResponse, HttpResponseForbidden
 from django.urls import reverse
 from django.shortcuts import get_object_or_404, redirect, render
+from django.core.paginator import Paginator
 from django.template.loader import render_to_string
 from django.db import transaction
 from django.utils import timezone
@@ -368,11 +369,15 @@ def requisition_list(request: HttpRequest) -> HttpResponse:
     else:
         return HttpResponseForbidden("Not allowed")
 
+    paginator = Paginator(requisitions.order_by("-created_at"), 50)
+    page_number = request.GET.get('page')
+    page_obj = paginator.get_page(page_number)
+
     return render(
         request,
         "production/requisition_list.html",
         {
-            "requisitions": requisitions,
+            "page_obj": page_obj,
             "pending_requisition_count": _pending_requisition_count(request.user),
             "is_admin": _user_has_role(request.user, ROLE_ADMIN),
         },
@@ -688,8 +693,12 @@ def wastage_report(request: HttpRequest) -> HttpResponse:
             }
         )
 
+    paginator = Paginator(rows, 50)
+    page_number = request.GET.get('page')
+    page_obj = paginator.get_page(page_number)
+
     context = {
-        "rows": rows,
+        "page_obj": page_obj,
         "sections": sections,
         "selected_section": selected_section,
         "start_date": start_date_val,
@@ -750,8 +759,12 @@ def downtime_list(request: HttpRequest) -> HttpResponse:
         rows = rows.filter(machine__section=selected_section)
     rows = rows.order_by("machine__section__name", "machine__name", "-start_time")
 
+    paginator = Paginator(rows, 50)
+    page_number = request.GET.get('page')
+    page_obj = paginator.get_page(page_number)
+
     context = {
-        "rows": rows,
+        "page_obj": page_obj,
         "report_date": report_date,
         "sections": sections,
         "selected_section": selected_section,

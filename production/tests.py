@@ -338,7 +338,7 @@ def test_wastage_report_shows_percentage(admin_user, section, item, client):
     client.force_login(admin_user)
     response = client.get(reverse("production:report-wastage"))
     assert response.status_code == 200
-    assert response.context["rows"][0]["waste_percentage"] == Decimal("10.00")
+    assert response.context["page_obj"][0]["waste_percentage"] == Decimal("10.00")
 
 
 def test_attendance_entry_saves_present_workers(supervisor_user, section, worker, client):
@@ -588,7 +588,7 @@ def test_requisition_list_scope_for_store_vs_admin(admin_user, store_user, secti
     client.force_login(store_user)
     store_response = client.get(reverse("production:requisition-list"))
     assert store_response.status_code == 200
-    requisitions = list(store_response.context["requisitions"])
+    requisitions = list(store_response.context["page_obj"])
     assert requisitions == [own]
 
     client.force_login(admin_user)
@@ -797,3 +797,33 @@ def test_csv_import_requires_known_section_code(admin_user, client):
     assert not Machine.objects.filter(machine_code="CSV-M-02").exists()
     messages = [str(message) for message in response.context["messages"]]
     assert any("Row 2:" in message and "Section with code 'UNKNOWN' not found." in message for message in messages)
+
+def test_pagination_logic_for_requisition_list(admin_user, section, item, client):
+    """Verify that pagination limits items to 50 per page."""
+    # Create 51 requisitions
+    reqs = [
+        Requisition(
+            item=item,
+            requested_qty=Decimal("1.00"),
+            note=f"Req {i}",
+            requested_by=admin_user,
+            requested_section=section,
+        )
+        for i in range(51)
+    ]
+    Requisition.objects.bulk_create(reqs)
+
+    client.force_login(admin_user)
+
+    # Page 1 should have 50 items
+    response = client.get(reverse("production:requisition-list"))
+    assert response.status_code == 200
+    page_obj = response.context["page_obj"]
+    assert len(page_obj.object_list) == 50
+    assert page_obj.paginator.num_pages == 2
+
+    # Page 2 should have 1 item
+    response_p2 = client.get(reverse("production:requisition-list"), {"page": 2})
+    assert response_p2.status_code == 200
+    page_obj_p2 = response_p2.context["page_obj"]
+    assert len(page_obj_p2.object_list) == 1

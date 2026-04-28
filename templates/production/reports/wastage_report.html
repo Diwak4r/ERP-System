@@ -35,7 +35,7 @@
             </tr>
         </thead>
         <tbody>
-            {% for row in rows %}
+            {% for row in page_obj %}
             <tr>
                 <td>{{ row.date }}</td>
                 <td>{{ row.section.name }}</td>
@@ -50,6 +50,26 @@
             </tr>
             {% endfor %}
         </tbody>
+
     </table>
+
+    <div class="pagination" style="margin-top: 1em;">
+        <span class="step-links">
+            {% if page_obj.has_previous %}
+                <a href="?{% if request.GET.start_date %}start_date={{ request.GET.start_date }}&{% endif %}{% if request.GET.end_date %}end_date={{ request.GET.end_date }}&{% endif %}{% if request.GET.section %}section={{ request.GET.section }}&{% endif %}page=1">&laquo; first</a>
+                <a href="?{% if request.GET.start_date %}start_date={{ request.GET.start_date }}&{% endif %}{% if request.GET.end_date %}end_date={{ request.GET.end_date }}&{% endif %}{% if request.GET.section %}section={{ request.GET.section }}&{% endif %}page={{ page_obj.previous_page_number }}">previous</a>
+            {% endif %}
+
+            <span class="current">
+                Page {{ page_obj.number }} of {{ page_obj.paginator.num_pages }}.
+            </span>
+
+            {% if page_obj.has_next %}
+                <a href="?{% if request.GET.start_date %}start_date={{ request.GET.start_date }}&{% endif %}{% if request.GET.end_date %}end_date={{ request.GET.end_date }}&{% endif %}{% if request.GET.section %}section={{ request.GET.section }}&{% endif %}page={{ page_obj.next_page_number }}">next</a>
+                <a href="?{% if request.GET.start_date %}start_date={{ request.GET.start_date }}&{% endif %}{% if request.GET.end_date %}end_date={{ request.GET.end_date }}&{% endif %}{% if request.GET.section %}section={{ request.GET.section }}&{% endif %}page={{ page_obj.paginator.num_pages }}">last &raquo;</a>
+            {% endif %}
+        </span>
+    </div>
+
 </body>
 </html>
