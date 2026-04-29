@@ -7,6 +7,27 @@
         .target-hit { background-color: #d4edda; } /* Green */
         .target-missed { background-color: #f8d7da; } /* Red */
         .downtime-alert { background-color: #f8d7da; color: #721c24; }
+        .requisition-popup {
+            display: none;
+            position: fixed;
+            right: 16px;
+            bottom: 16px;
+            width: 360px;
+            max-width: calc(100% - 32px);
+            background: #fff3cd;
+            border: 1px solid #ffe69c;
+            border-radius: 8px;
+            box-shadow: 0 8px 20px rgba(0, 0, 0, 0.2);
+            padding: 12px;
+            z-index: 3;
+        }
+        .requisition-popup ul {
+            margin: 8px 0;
+            padding-left: 18px;
+        }
+        .requisition-popup a {
+            color: #0b5ed7;
+        }
 
         /* Modal styles */
         .modal {
@@ -59,6 +80,21 @@
             </span>
         {% endif %}
     </nav>
+    {% if is_admin %}
+        <div
+            id="requisition-alert-feed"
+            hx-get="{% url 'production:requisition-notifications' %}"
+            hx-trigger="load, every 10s"
+            hx-swap="innerHTML"
+            hx-vals='js:{after_id: window.erpLastRequisitionId || 0}'
+            style="display:none;"
+        ></div>
+        <div id="requisition-popup" class="requisition-popup" aria-live="polite">
+            <strong>New requisitions pending approval</strong>
+            <ul id="requisition-popup-list"></ul>
+            <button type="button" onclick="closeRequisitionPopup()">Dismiss</button>
+        </div>
+    {% endif %}
 
     <form method="get">
         <label for="date">Date:</label>
@@ -178,7 +214,39 @@
             if(event.detail.target.id === "history-modal-content") {
                 document.getElementById("workerHistoryModal").style.display = "block";
             }
+            if (event.detail.target.id === "requisition-alert-feed") {
+                var state = document.querySelector("#requisition-alert-feed #requisition-alert-state");
+                if (!state) {
+                    return;
+                }
+                var latestId = parseInt(state.dataset.latestId || "0", 10);
+                var items = state.querySelectorAll(".requisition-alert-item");
+                if (items.length > 0) {
+                    var popup = document.getElementById("requisition-popup");
+                    var list = document.getElementById("requisition-popup-list");
+                    list.innerHTML = "";
+                    items.forEach(function(item) {
+                        var li = document.createElement("li");
+                        var link = document.createElement("a");
+                        link.href = item.dataset.requisitionLink;
+                        link.textContent = item.textContent.trim();
+                        li.appendChild(link);
+                        list.appendChild(li);
+                    });
+                    popup.style.display = "block";
+                }
+                if (!Number.isNaN(latestId)) {
+                    window.erpLastRequisitionId = latestId;
+                }
+            }
         });
+
+        function closeRequisitionPopup() {
+            var popup = document.getElementById("requisition-popup");
+            if (popup) {
+                popup.style.display = "none";
+            }
+        }
     </script>
 </body>
 </html>

@@ -12,6 +12,7 @@ urlpatterns = [
     path("requisitions/", views.requisition_list, name="requisition-list"),
     path("requisitions/<int:requisition_id>/", views.requisition_detail, name="requisition-detail"),
     path("requisitions/pending-badge/", views.requisition_pending_badge, name="requisition-pending-badge"),
+    path("requisitions/notifications/", views.requisition_notifications, name="requisition-notifications"),
     path("attendance/entry/", views.attendance_entry, name="attendance-entry"),
     path("downtime/entry/", views.downtime_entry, name="downtime-entry"),
     path("waste/entry/", views.waste_entry, name="waste-entry"),

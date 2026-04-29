@@ -465,6 +465,40 @@ def requisition_pending_badge(request: HttpRequest) -> HttpResponse:
 
 
 @login_required
+def requisition_notifications(request: HttpRequest) -> HttpResponse:
+    if not _user_has_role(request.user, ROLE_ADMIN):
+        return HttpResponse("")
+
+    after_id_raw = request.GET.get("after_id", "0")
+    try:
+        after_id = max(int(after_id_raw), 0)
+    except (TypeError, ValueError):
+        after_id = 0
+
+    new_requisitions = list(
+        Requisition.objects.select_related("item", "requested_by", "requested_section")
+        .filter(status=Requisition.STATUS_PENDING, id__gt=after_id)
+        .order_by("id")[:5]
+    )
+    latest_pending_id = (
+        Requisition.objects.filter(status=Requisition.STATUS_PENDING)
+        .order_by("-id")
+        .values_list("id", flat=True)
+        .first()
+        or after_id
+    )
+
+    return render(
+        request,
+        "production/requisition_notifications.html",
+        {
+            "new_requisitions": new_requisitions,
+            "latest_pending_id": latest_pending_id,
+        },
+    )
+
+
+@login_required
 def attendance_entry(request: HttpRequest) -> HttpResponse:
     today = date.today()
     sections = _available_sections(request.user)
