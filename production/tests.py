@@ -698,6 +698,59 @@ def test_dashboard_shows_pending_requisition_badge(admin_user, store_user, secti
     assert b"pending-requisition-badge" in response.content
 
 
+def test_requisition_notifications_requires_admin(supervisor_user, client):
+    unauthenticated = client.get(reverse("production:requisition-notifications"))
+    assert unauthenticated.status_code == 302
+
+    client.force_login(supervisor_user)
+    forbidden = client.get(reverse("production:requisition-notifications"))
+    assert forbidden.status_code == 200
+    assert forbidden.content == b""
+
+
+def test_requisition_notifications_only_return_new_pending(admin_user, store_user, section, item, client):
+    section.supervisors.add(store_user)
+    old_pending = Requisition.objects.create(
+        item=item,
+        requested_qty=Decimal("3.00"),
+        note="old pending",
+        requested_by=store_user,
+        requested_section=section,
+        status=Requisition.STATUS_PENDING,
+    )
+    approved_item = Item.objects.create(name="Approved Item", sku="APR-001", unit=Item.UNIT_KG)
+    Requisition.objects.create(
+        item=approved_item,
+        requested_qty=Decimal("4.00"),
+        note="approved",
+        requested_by=store_user,
+        requested_section=section,
+        status=Requisition.STATUS_APPROVED,
+    )
+    new_item = Item.objects.create(name="Fresh Item", sku="NEW-POP-001", unit=Item.UNIT_PCS)
+    newest_pending = Requisition.objects.create(
+        item=new_item,
+        requested_qty=Decimal("7.00"),
+        note="new pending",
+        requested_by=store_user,
+        requested_section=section,
+        status=Requisition.STATUS_PENDING,
+    )
+
+    client.force_login(admin_user)
+    response = client.get(
+        reverse("production:requisition-notifications"),
+        {"after_id": old_pending.id},
+    )
+
+    assert response.status_code == 200
+    assert str(newest_pending.id).encode() in response.content
+    assert b"Fresh Item" in response.content
+    assert b"Widget" not in response.content
+    assert response.context["latest_pending_id"] == newest_pending.id
+    assert reverse("production:requisition-detail", args=[newest_pending.id]).encode() in response.content
+
+
 def test_csv_import_export_page_requires_admin(supervisor_user, client):
     unauthenticated = client.get(reverse("production:csv-import-export"))
     assert unauthenticated.status_code == 302
