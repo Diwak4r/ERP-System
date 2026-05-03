@@ -90,6 +90,29 @@ def test_overtime_calculation():
     assert overtime == Decimal("1.60")
 
 
+def test_overtime_calculation_with_difficulty_factor():
+    overtime = ProductionEntry.compute_overtime(
+        Decimal("120"),
+        Decimal("100"),
+        Decimal("8"),
+        Decimal("1.50"),
+    )
+    assert overtime == Decimal("2.40")
+
+
+def test_target_rule_requires_positive_difficulty_factor(section, item):
+    rule = TargetRule(
+        section=section,
+        item=item,
+        target_qty=Decimal("100"),
+        shift_hours=Decimal("8"),
+        difficulty_factor=Decimal("0.00"),
+        start_date=date.today(),
+    )
+    with pytest.raises(ValidationError, match="Difficulty factor must be greater than zero."):
+        rule.clean()
+
+
 def test_target_snapshot_saved(admin_user, section, worker, item, target_rule, client):
     client.force_login(admin_user)
     resp = client.post(
@@ -113,8 +136,44 @@ def test_target_snapshot_saved(admin_user, section, worker, item, target_rule, c
     entry = ProductionEntry.objects.latest("id")
     assert entry.target_qty == target_rule.target_qty
     assert entry.shift_hours == target_rule.shift_hours
+    assert entry.difficulty_factor_snapshot == target_rule.difficulty_factor
     assert entry.overtime_hours == Decimal("1.60")
     assert entry.target_met is True
+
+
+def test_target_rule_difficulty_factor_applies_to_overtime(admin_user, section, worker, item, client):
+    TargetRule.objects.create(
+        section=section,
+        item=item,
+        target_qty=Decimal("100"),
+        shift_hours=Decimal("8"),
+        difficulty_factor=Decimal("1.50"),
+        start_date=date.today(),
+    )
+
+    client.force_login(admin_user)
+    response = client.post(
+        reverse("production:entry"),
+        data={
+            "entry_date": date.today().isoformat(),
+            "section": section.id,
+            "form-TOTAL_FORMS": "1",
+            "form-INITIAL_FORMS": "0",
+            "form-MIN_NUM_FORMS": "0",
+            "form-MAX_NUM_FORMS": "1000",
+            "form-0-worker": worker.id,
+            "form-0-item": item.id,
+            "form-0-target_qty": "0",
+            "form-0-actual_qty": "120",
+            "form-0-shift_hours": "0",
+        },
+        follow=True,
+    )
+
+    assert response.status_code == 200
+    entry = ProductionEntry.objects.latest("id")
+    assert entry.difficulty_factor_snapshot == Decimal("1.50")
+    assert entry.overtime_hours == Decimal("2.40")
 
 
 def test_permissions_enforced(supervisor_user, section, worker, item, client):
