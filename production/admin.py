@@ -103,7 +103,7 @@ class MachineDowntimeAdmin(admin.ModelAdmin):
 
 @admin.register(TargetRule)
 class TargetRuleAdmin(admin.ModelAdmin):
-    list_display = ("section", "item", "target_qty", "shift_hours", "start_date", "end_date")
+    list_display = ("section", "item", "target_qty", "shift_hours", "difficulty_factor", "start_date", "end_date")
     search_fields = ("section__name", "item__name")
     list_filter = ("section", "item")
 
@@ -118,6 +118,7 @@ class ProductionEntryAdmin(admin.ModelAdmin):
         "target_qty",
         "actual_qty",
         "shift_hours",
+        "difficulty_factor_snapshot",
         "overtime_hours",
         "target_met",
     )
