@@ -88,6 +88,7 @@ class TargetRule(models.Model):
     item = models.ForeignKey(Item, on_delete=models.CASCADE)
     target_qty = models.DecimalField(max_digits=12, decimal_places=2)
     shift_hours = models.DecimalField(max_digits=5, decimal_places=2)
+    difficulty_factor = models.DecimalField(max_digits=5, decimal_places=2, default=Decimal("1.00"))
     start_date = models.DateField()
     end_date = models.DateField(null=True, blank=True)
 
@@ -103,6 +104,8 @@ class TargetRule(models.Model):
     def clean(self) -> None:
         if self.end_date and self.end_date < self.start_date:
             raise ValidationError("End date cannot be earlier than start date")
+        if self.difficulty_factor <= 0:
+            raise ValidationError("Difficulty factor must be greater than zero.")
 
 
 class ProductionEntry(models.Model):
@@ -114,6 +117,7 @@ class ProductionEntry(models.Model):
     target_qty = models.DecimalField(max_digits=12, decimal_places=2)
     actual_qty = models.DecimalField(max_digits=12, decimal_places=2)
     shift_hours = models.DecimalField(max_digits=5, decimal_places=2)
+    difficulty_factor_snapshot = models.DecimalField(max_digits=5, decimal_places=2, default=Decimal("1.00"))
     overtime_hours = models.DecimalField(max_digits=7, decimal_places=2, default=Decimal("0.00"))
     target_met = models.BooleanField(default=False)
 
@@ -133,13 +137,18 @@ class ProductionEntry(models.Model):
         return f"{self.entry_date} - {self.section} - {self.worker}"
 
     @staticmethod
-    def compute_overtime(actual_qty: Decimal, target_qty: Decimal, shift_hours: Decimal) -> Decimal:
-        if target_qty <= 0 or shift_hours <= 0:
+    def compute_overtime(
+        actual_qty: Decimal,
+        target_qty: Decimal,
+        shift_hours: Decimal,
+        difficulty_factor: Decimal = Decimal("1.00"),
+    ) -> Decimal:
+        if target_qty <= 0 or shift_hours <= 0 or difficulty_factor <= 0:
             return Decimal("0")
         ratio = (actual_qty / target_qty) - Decimal("1")
         if ratio <= 0:
             return Decimal("0")
-        return (ratio * shift_hours).quantize(Decimal("0.01"))
+        return (ratio * shift_hours * difficulty_factor).quantize(Decimal("0.01"))
 
     def clean(self) -> None:
         # Anti-Excel Immutability Rule
@@ -181,7 +190,12 @@ class ProductionEntry(models.Model):
 
     def set_outcomes(self) -> None:
         self.target_met = self.actual_qty >= self.target_qty if self.target_qty is not None else False
-        self.overtime_hours = self.compute_overtime(self.actual_qty, self.target_qty, self.shift_hours)
+        self.overtime_hours = self.compute_overtime(
+            self.actual_qty,
+            self.target_qty,
+            self.shift_hours,
+            self.difficulty_factor_snapshot,
+        )
 
     def save(self, *args, **kwargs):
         super().save(*args, **kwargs)

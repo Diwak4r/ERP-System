@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import date
+from decimal import Decimal
 from typing import Optional
 
 from django import forms
@@ -110,10 +111,12 @@ class ProductionEntryForm(forms.ModelForm):
         if rule:
             self.cleaned_data["target_qty"] = rule.target_qty
             self.cleaned_data["shift_hours"] = rule.shift_hours
+            self.cleaned_data["difficulty_factor_snapshot"] = rule.difficulty_factor
         else:
             # No rule found, default to zero
             self.cleaned_data["target_qty"] = self.cleaned_data.get("target_qty") or 0
             self.cleaned_data["shift_hours"] = self.cleaned_data.get("shift_hours") or 0
+            self.cleaned_data["difficulty_factor_snapshot"] = Decimal("1.00")
 
     def clean(self):
         cleaned = super().clean()

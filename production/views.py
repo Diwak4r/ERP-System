@@ -116,6 +116,7 @@ def production_entry(request: HttpRequest) -> HttpResponse:
                     target_qty=Decimal(data.get("target_qty") or 0),
                     actual_qty=Decimal(data.get("actual_qty") or 0),
                     shift_hours=Decimal(data.get("shift_hours") or 0),
+                    difficulty_factor_snapshot=Decimal(data.get("difficulty_factor_snapshot") or 1),
                     created_by=request.user,
                 )
                 entry.set_outcomes()
