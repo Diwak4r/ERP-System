@@ -33,7 +33,7 @@ class RequestIPMiddleware:
 
 class LoginRateLimitMiddleware:
     """Limits login attempts to 5 per 5 minutes per IP to prevent brute force attacks."""
-    
+
     def __init__(self, get_response):
         self.get_response = get_response
 
@@ -42,16 +42,16 @@ class LoginRateLimitMiddleware:
             ip = get_current_request_ip()
             if not ip:
                 ip = request.META.get("REMOTE_ADDR", "")
-                
+
             if ip:
                 cache_key = f"login_attempts_{ip}"
                 attempts = cache.get(cache_key, 0)
-                
+
                 if attempts >= 5:
                     logger.warning(f"Rate limit exceeded for IP {ip} on admin login.")
                     return HttpResponseForbidden("Too many login attempts. Please try again later.")
-                
+
                 cache.set(cache_key, attempts + 1, 300)
-                
+
         return self.get_response(request)
 
