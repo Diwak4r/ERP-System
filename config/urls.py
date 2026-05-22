@@ -16,9 +16,13 @@ def healthz(request):
         status = 503
     return JsonResponse(payload, status=status)
 
+from django.views.generic import RedirectView
+
 urlpatterns = [
+    path("", RedirectView.as_view(url="/production/entry/", permanent=False), name="home"),
     path("admin/", admin.site.urls),
     path("production/", include("production.urls")),
+    path("accounts/", include("django.contrib.auth.urls")),
     path("healthz", healthz, name="healthz"),
     path("healthz/", healthz, name="healthz-slash"),
 ]

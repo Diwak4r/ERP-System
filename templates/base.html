@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ERP Tracker</title>
+    <!-- HTMX -->
+    <script src="https://unpkg.com/htmx.org@1.9.10"></script>
+    <style>
+        body { font-family: sans-serif; margin: 0; padding: 0; background-color: #f4f4f9; }
+        .navbar { background-color: #333; color: white; padding: 1rem; display: flex; justify-content: space-between; align-items: center; }
+        .navbar a { color: white; text-decoration: none; padding: 0 1rem; }
+        .navbar a:hover { text-decoration: underline; }
+        .nav-links { display: flex; gap: 1rem; }
+        .container { padding: 2rem; }
+    </style>
+</head>
+<body>
+    <div class="navbar">
+        <div class="logo"><strong>ERP Tracker</strong></div>
+        <div class="nav-links">
+            {% if user.is_authenticated %}
+                <a href="{% url 'production:entry' %}">Production</a>
+                <a href="{% url 'production:requisition-list' %}">Requisitions</a>
+                <a href="{% url 'production:report-daily-section' %}">Reports</a>
+                {% if user.is_superuser or 'ADMIN' in user.groups.all|join:',' %}
+                    <a href="/admin/">Admin</a>
+                {% endif %}
+                <span>Welcome, {{ user.username }}</span>
+                <form action="{% url 'logout' %}" method="post" style="display:inline;">
+                    {% csrf_token %}
+                    <button type="submit" style="background:none; border:none; color:white; cursor:pointer; text-decoration:underline;">Logout</button>
+                </form>
+            {% else %}
+                <a href="{% url 'login' %}">Login</a>
+            {% endif %}
+        </div>
+    </div>
+
+    <div class="container">
+        {% if messages %}
+            <ul class="messages" style="list-style-type: none; padding: 0;">
+                {% for message in messages %}
+                    <li{% if message.tags %} class="{{ message.tags }}"{% endif %} style="padding: 10px; margin-bottom: 10px; background-color: #ddd;">
+                        {{ message }}
+                    </li>
+                {% endfor %}
+            </ul>
+        {% endif %}
+
+        {% block content %}{% endblock %}
+    </div>
+</body>
+</html>

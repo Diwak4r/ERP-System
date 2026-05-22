@@ -827,3 +827,27 @@ def test_pagination_logic_for_requisition_list(admin_user, section, item, client
     assert response_p2.status_code == 200
     page_obj_p2 = response_p2.context["page_obj"]
     assert len(page_obj_p2.object_list) == 1
+
+
+def test_seed_groups_command_creates_groups():
+    from django.core.management import call_command
+    from django.contrib.auth.models import Group
+
+    # Clear out any existing groups (in test db) just in case
+    Group.objects.all().delete()
+
+    call_command("seed_groups")
+
+    expected_groups = ["ADMIN", "SUPERVISOR", "STORE", "VIEWER"]
+    for group_name in expected_groups:
+        assert Group.objects.filter(name=group_name).exists()
+
+    # Running it twice should not error or create duplicates
+    call_command("seed_groups")
+    assert Group.objects.count() == 4
+
+
+def test_root_url_redirects_to_production_entry(client):
+    response = client.get("/")
+    assert response.status_code == 302
+    assert response.url == "/production/entry/"
