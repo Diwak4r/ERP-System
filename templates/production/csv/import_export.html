@@ -1,0 +1,108 @@
+{% load static %}
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Master Data CSV Import/Export</title>
+    <script src="https://unpkg.com/htmx.org@1.9.12"></script>
+    <style>
+        body { font-family: sans-serif; margin: 2rem; }
+        .container { max-width: 800px; margin: 0 auto; }
+        .card { border: 1px solid #ddd; padding: 1.5rem; margin-bottom: 2rem; border-radius: 4px; }
+        .messages { margin-bottom: 1rem; }
+        .message.error { color: red; }
+        .message.success { color: green; }
+        .btn { padding: 0.5rem 1rem; cursor: pointer; border: 1px solid #ccc; background: #eee; text-decoration: none; color: black; display: inline-block; }
+        .btn-primary { background: #007bff; color: white; border: none; }
+        .btn-primary:hover { background: #0056b3; }
+        .form-group { margin-bottom: 1rem; }
+        label { display: block; margin-bottom: 0.5rem; font-weight: bold; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Master Data CSV Import/Export</h1>
+
+        <div class="messages">
+            {% if messages %}
+                <ul style="list-style-type: none; padding-left: 0;">
+                {% for message in messages %}
+                    <li class="message {{ message.tags }}">{{ message }}</li>
+                {% endfor %}
+                </ul>
+            {% endif %}
+        </div>
+
+        <div class="card">
+            <h2>Import Master Data</h2>
+            <form method="post" enctype="multipart/form-data">
+                {% csrf_token %}
+                <div class="form-group">
+                    <label for="model_name">Select Model:</label>
+                    <select name="model_name" id="model_name" required>
+                        <option value="">-- Select Model --</option>
+                        {% for key, info in models_map.items %}
+                            <option value="{{ key }}">{{ info.model|title }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+
+                <div class="form-group">
+                    <label for="csv_file">Upload CSV File:</label>
+                    <input type="file" name="csv_file" id="csv_file" accept=".csv" required>
+                </div>
+
+                <button type="submit" class="btn btn-primary">Import Data</button>
+            </form>
+        </div>
+
+        <div class="card">
+            <h2>Export / Templates</h2>
+            <p>Download an empty template to fill in, or export current data.</p>
+
+            <div id="export-section">
+                <div class="form-group">
+                    <label for="export_model_name">Select Model:</label>
+                    <select id="export_model_name" onchange="updateLinks()">
+                        <option value="">-- Select Model --</option>
+                        {% for key, info in models_map.items %}
+                            <option value="{{ key }}">{{ info.model|title }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+
+                <a href="#" id="template-link" class="btn" style="pointer-events: none; opacity: 0.5;">Download Template</a>
+                <a href="#" id="export-link" class="btn" style="pointer-events: none; opacity: 0.5;">Export Data</a>
+            </div>
+
+            <script>
+                function updateLinks() {
+                    const select = document.getElementById('export_model_name');
+                    const modelName = select.value;
+                    const templateLink = document.getElementById('template-link');
+                    const exportLink = document.getElementById('export-link');
+
+                    if (modelName) {
+                        templateLink.href = `/admin/csv-template/${modelName}/`;
+                        templateLink.style.pointerEvents = 'auto';
+                        templateLink.style.opacity = '1';
+
+                        exportLink.href = `/admin/csv-export/${modelName}/`;
+                        exportLink.style.pointerEvents = 'auto';
+                        exportLink.style.opacity = '1';
+                    } else {
+                        templateLink.href = '#';
+                        templateLink.style.pointerEvents = 'none';
+                        templateLink.style.opacity = '0.5';
+
+                        exportLink.href = '#';
+                        exportLink.style.pointerEvents = 'none';
+                        exportLink.style.opacity = '0.5';
+                    }
+                }
+            </script>
+        </div>
+
+        <p><a href="/admin/" class="btn">&laquo; Back to Admin</a></p>
+    </div>
+</body>
+</html>
