@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>CSV Import/Export</title>
+    <script src="https://unpkg.com/htmx.org@1.9.12"></script>
+    <style>
+        body { font-family: sans-serif; padding: 20px; }
+        .container { max-width: 800px; margin: auto; }
+        .alert { padding: 10px; margin-bottom: 10px; border-radius: 4px; }
+        .alert-error { background-color: #f8d7da; color: #721c24; }
+        .alert-success { background-color: #d4edda; color: #155724; }
+        .card { border: 1px solid #ccc; padding: 20px; border-radius: 5px; margin-bottom: 20px; }
+        table { width: 100%; border-collapse: collapse; margin-top: 10px; }
+        th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
+        th { background-color: #f2f2f2; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>CSV Import/Export</h1>
+
+        {% if messages %}
+            <div>
+                {% for message in messages %}
+                    <div class="alert {% if message.tags == 'error' %}alert-error{% else %}alert-success{% endif %}">
+                        {{ message }}
+                    </div>
+                {% endfor %}
+            </div>
+        {% endif %}
+
+        <div class="card">
+            <h2>Import Data</h2>
+            <form method="post" enctype="multipart/form-data">
+                {% csrf_token %}
+
+                <div style="margin-bottom: 15px;">
+                    <label for="model_name">Select Model</label><br>
+                    <select name="model_name" id="model_name" required>
+                        {% for model_key, model_info in models_map.items %}
+                            <option value="{{ model_key }}">{{ model_key|title }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+
+                <div style="margin-bottom: 15px;">
+                    <label for="csv_file">CSV File</label><br>
+                    <input type="file" name="csv_file" id="csv_file" accept=".csv" required>
+                    <p style="font-size: 0.8em; color: #666;">Maximum file size: 5MB.</p>
+                </div>
+
+                <button type="submit">Import CSV</button>
+            </form>
+        </div>
+
+        <div class="card">
+            <h2>Export Data / Templates</h2>
+            <table>
+                <thead>
+                    <tr>
+                        <th>Model</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for model_key, model_info in models_map.items %}
+                        <tr>
+                            <td>{{ model_key|title }}</td>
+                            <td>
+                                <a href="{% url 'production:csv-template' model_name=model_key %}">Download Template</a> |
+                                <a href="{% url 'production:csv-export' model_name=model_key %}">Export Data</a>
+                            </td>
+                        </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</body>
+</html>

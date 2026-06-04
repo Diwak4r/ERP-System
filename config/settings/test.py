@@ -18,4 +18,4 @@ DATABASES = {
 PASSWORD_HASHERS = ["django.contrib.auth.hashers.MD5PasswordHasher"]
 
 # ── Silence unneeded warnings ────────────────────────────────────────────────
-LOGGING: dict = {}
+LOGGING = {}
