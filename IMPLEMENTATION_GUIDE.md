@@ -24,8 +24,8 @@ Duration: 1-2 weeks | Priority: CRITICAL
 - **Deliverable:** AGENTS.md file with working agreement and non-negotiables
 - **Repository:** Yes, file exists at repo root
 
-#### Prompt 0B: Docker Bootstrap + Django Setup
-- **Status:** ⏳ Pending
+#### Prompt 0B: Docker Bootstrap + Django Setup ✅ COMPLETED
+- **Status:** ✅ Done
 - **Deliverables:**
   - docker-compose.yml with web (Django), db (PostgreSQL), optional pgadmin
   - Django project structure: src/config/settings/ (base.py, dev.py, prod.py)
@@ -55,8 +55,8 @@ Duration: 1-2 weeks | Priority: CRITICAL
   - Permission decorators/mixins
   - Tests for permission boundaries
 
-#### Prompt 0D: Master Data Models
-- **Status:** ⏳ Pending
+#### Prompt 0D: Master Data Models ✅ COMPLETED
+- **Status:** ✅ Done
 - **Deliverables:**
   - Section model (name, code, is_active)
   - Worker model (name, employee_code, is_daily_wage, is_active)
