@@ -1,0 +1,13 @@
+<div id="requisition-alert-state" data-latest-id="{{ latest_pending_id }}">
+    {% for requisition in new_requisitions %}
+        <article
+            class="requisition-alert-item"
+            data-requisition-id="{{ requisition.id }}"
+            data-requisition-link="{% url 'production:requisition-detail' requisition.id %}"
+        >
+            <strong>New request:</strong>
+            {{ requisition.requested_section.name }} requested {{ requisition.requested_qty }}
+            {{ requisition.item.unit }} of {{ requisition.item.name }} by {{ requisition.requested_by.username }}.
+        </article>
+    {% endfor %}
+</div>
