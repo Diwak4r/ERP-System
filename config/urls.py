@@ -2,6 +2,7 @@ from django.contrib import admin
 from django.db import connections
 from django.http import JsonResponse
 from django.urls import include, path
+from django.views.generic import RedirectView
 
 
 def healthz(request):
@@ -17,8 +18,10 @@ def healthz(request):
     return JsonResponse(payload, status=status)
 
 urlpatterns = [
+    path("", RedirectView.as_view(url="/production/entry/", permanent=False), name="home"),
     path("admin/", admin.site.urls),
     path("production/", include("production.urls")),
+    path("accounts/", include("django.contrib.auth.urls")),
     path("healthz", healthz, name="healthz"),
     path("healthz/", healthz, name="healthz-slash"),
 ]
