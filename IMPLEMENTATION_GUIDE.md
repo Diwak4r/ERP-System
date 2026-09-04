@@ -45,7 +45,7 @@ Duration: 1-2 weeks | Priority: CRITICAL
   ```
 
 #### Prompt 0C: Authentication + RBAC
-- **Status:** ⏳ Pending
+- **Status:** ✅ COMPLETED
 - **Deliverables:**
   - Django auth (sessions)
   - Groups (ADMIN, SUPERVISOR, STORE, VIEWER)

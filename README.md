@@ -8,6 +8,9 @@ Production-grade in-house ERP/Tracker system for manufacturing facilities. Curre
    ```bash
    cp .env.example .env
    ```
+   **Note for Production (Supabase):** Ensure you set the `DATABASE_URL` environment variable to your Supabase PostgreSQL connection string securely. For example:
+   `DATABASE_URL=postgres://postgres:[PASSWORD]@db.[PROJECT_ID].supabase.co:5432/postgres`
+
 2. Start services:
    ```bash
    docker compose build
