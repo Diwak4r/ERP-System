@@ -886,3 +886,53 @@ def test_pagination_logic_for_requisition_list(admin_user, section, item, client
     assert response_p2.status_code == 200
     page_obj_p2 = response_p2.context["page_obj"]
     assert len(page_obj_p2.object_list) == 1
+
+
+def test_seed_groups_command_creates_groups():
+    from django.core.management import call_command
+    from django.contrib.auth.models import Group
+
+    # Clear out any existing groups (in test db) just in case
+    Group.objects.all().delete()
+
+    call_command("seed_groups")
+
+    expected_groups = ["ADMIN", "SUPERVISOR", "STORE", "VIEWER"]
+    for group_name in expected_groups:
+        assert Group.objects.filter(name=group_name).exists()
+
+    # Running it twice should not error or create duplicates
+    call_command("seed_groups")
+    assert Group.objects.count() == 4
+
+
+def test_root_url_redirects_to_production_entry(client):
+    response = client.get("/")
+    assert response.status_code == 302
+    assert response.url == "/production/entry/"
+
+
+def test_login_page_renders(client):
+    response = client.get(reverse("login"))
+    assert response.status_code == 200
+    assert 'name="username"' in response.content.decode()
+    assert 'name="password"' in response.content.decode()
+
+
+def test_login_page_prompts_when_next_is_set(client):
+    response = client.get(reverse("login"), {"next": "/production/entry/"})
+    assert response.status_code == 200
+    assert "Please log in to see this page." in response.content.decode()
+
+
+def test_logout_renders_confirmation_page(client):
+    User = get_user_model()
+    user = User.objects.create_user(username="logout-tester", password="pw-for-test")
+    client.force_login(user)
+
+    response = client.post(reverse("logout"))
+
+    # LOGOUT_REDIRECT_URL is deliberately unset so the confirmation page renders
+    # instead of bouncing straight back to the login form.
+    assert response.status_code == 200
+    assert "You have been logged out." in response.content.decode()
