@@ -2,9 +2,25 @@
 
 {% block content %}
   <h2>Login</h2>
+
+  {% if form.errors %}
+    <p class="alert alert-error">Your username and password didn't match. Please try again.</p>
+  {% endif %}
+
+  {% if next %}
+    {% if user.is_authenticated %}
+      <p class="alert alert-warning">
+        Your account doesn't have access to this page. To proceed, please log in with an account that has access.
+      </p>
+    {% else %}
+      <p class="alert alert-info">Please log in to see this page.</p>
+    {% endif %}
+  {% endif %}
+
   <form method="post" action="{% url 'login' %}">
     {% csrf_token %}
     {{ form.as_p }}
     <button type="submit">Login</button>
+    <input type="hidden" name="next" value="{{ next|default:'/production/entry/' }}">
   </form>
 {% endblock %}
